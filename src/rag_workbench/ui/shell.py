@@ -18,16 +18,16 @@ def session_title(session: dict, jobs: dict, unsaved: dict) -> str:
     job = jobs.get(session["id"])
     target = getattr(job, "replaces_assistant_id", None)
     if target is not None and target == session.get("first_assistant_id"):
-        return job.question[:32]
+        return job.question[:80]
     for turn in reversed(unsaved.get(session["id"], [])):
         target = getattr(turn, "replaces_assistant_id", None)
         if target is not None and target == session.get("first_assistant_id"):
-            return turn.question[:32]
+            return turn.question[:80]
     if session["message_count"] == 0 and session["title"] == "新会话":
         if session["id"] in jobs:
-            return jobs[session["id"]].question[:32]
+            return jobs[session["id"]].question[:80]
         if turns := unsaved.get(session["id"]):
-            return turns[0].question[:32]
+            return turns[0].question[:80]
     return session["title"]
 
 

@@ -20,12 +20,14 @@
   --secondary-background-color:light-dark(#fff,#212121);
   --text-color:light-dark(#282824,#e2e1da);
   --wb-sidebar:light-dark(#f0efeb,#111111);
-  --wb-muted:light-dark(#73736b,#a5a59b);
-  --wb-subtle:light-dark(#87867e,#8a8a81);
+  --wb-muted:light-dark(#66665f,#a5a59b);
+  --wb-subtle:light-dark(#6f6e67,#8a8a81);
   --wb-hover:light-dark(#e7e6e0,#2c2c28);
   --wb-selected:light-dark(#e2e1db,#343430);
   --cds-border:light-dark(#25251e18,#ffffff12);
   --cds-border-strong:light-dark(#25251e26,#ffffff21);
+  --wb-focus:light-dark(#ae461c,#d97757);
+  --wb-accent-text:light-dark(#ae461c,#d97757);
   --wb-sidebar-space:286px;
 }
 [data-testid="stApp"]:has([data-testid="stSidebar"][data-collapsed="true"]) {--wb-sidebar-space:0px;}
@@ -69,7 +71,7 @@ h3 {font-size:17px!important;font-weight:550!important;}
 [data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input[value="3"])::before {mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='black' stroke-width='1.5'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='m16 16 5 5'/%3E%3C/g%3E%3C/svg%3E");}
 [data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:checked) {background:var(--wb-selected);}
 [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {background:var(--wb-hover);}
-[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:focus-visible) {position:relative;z-index:1;outline:2px solid var(--cds-clay);outline-offset:2px;}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:has(input:focus-visible) {position:relative;z-index:1;outline:2px solid var(--wb-focus);outline-offset:2px;}
 [data-testid="stSidebar"] [data-testid="stRadio"] label p {font-size:14px;}
 .st-key-recents_header {margin:28px 0 7px;padding:0 6px;}
 .st-key-recents_header > [data-testid="stHorizontalBlock"] {justify-content:space-between;}
@@ -96,7 +98,8 @@ h3 {font-size:17px!important;font-weight:550!important;}
 .local-profile div span {display:block;font-size:11px;color:var(--wb-muted);margin-top:2px;}
 .st-key-sidebar_footer [data-testid="stCaptionContainer"] p {font-size:11px;color:var(--wb-muted);}
 .conversation-header {position:fixed;top:16px;left:calc(var(--wb-sidebar-space) + 24px);right:64px;display:flex;font-size:15px;color:var(--text-color);z-index:1000001;pointer-events:none;}
-.conversation-header::before {content:"";position:fixed;inset:0 0 auto var(--wb-sidebar-space);height:64px;background:var(--background-color);mask-image:linear-gradient(#000 44px,transparent 64px);z-index:-1;pointer-events:none;}
+/* Stop before Streamlit's top-right toolbar (z-index 999990), which the header backdrop used to cover. */
+.conversation-header::before {content:"";position:fixed;inset:0 64px auto var(--wb-sidebar-space);height:64px;background:var(--background-color);mask-image:linear-gradient(#000 44px,transparent 64px);z-index:-1;pointer-events:none;}
 .st-key-active_search_filter {align-items:center;gap:4px!important;}
 .st-key-active_search_filter [data-testid="stText"] {font-size:11px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .st-key-active_search_filter button {font-size:11px;min-height:28px;padding:2px 5px;white-space:nowrap;}
@@ -163,7 +166,7 @@ h3 {font-size:17px!important;font-weight:550!important;}
    Keep keyboard scrolling and control focus rings, suppress only this region's ring. */
 [data-testid="stMain"]:focus-visible::before {box-shadow:none;}
 
-.composer-privacy {display:block;text-align:center;font-size:11px;color:var(--wb-subtle);line-height:27px;white-space:nowrap;}
+.composer-privacy {display:block;text-align:center;font-size:11.5px;color:var(--wb-subtle);line-height:27px;white-space:nowrap;}
 [data-testid="stMainBlockContainer"]:has(.conversation-active) {padding-top:88px;padding-bottom:max(300px,calc(min(25dvh,240px) + 160px));}
 [data-testid="stChatMessage"] {background:transparent;padding:24px 0;gap:0;border-radius:0;}
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {margin-left:auto;width:fit-content;max-width:88%;padding:12px 16px;background:light-dark(#eeede7,#212121);border-radius:14px;}
@@ -198,7 +201,6 @@ h3 {font-size:17px!important;font-weight:550!important;}
   .st-key-composer::before {inset:-10px -16px -10px;}
   .st-key-prompt_surface {padding:8px 10px;}
   .st-key-prompt_surface textarea {font-size:15px!important;min-height:26px!important;}
-  .st-key-composer_controls [data-testid="stColumn"]:nth-child(2) {display:none;}
 }
 @media(max-height:650px) {
   .st-key-sidebar_footer {position:static;margin-top:24px!important;}
@@ -274,7 +276,7 @@ h3 {font-size:17px!important;font-weight:550!important;}
 
 /* ── Claude Code flavour ───────────────────────────────────────────────────
    A terminal-leaning layer over the reading UI: clay `>` prompt, `●` turn
-   headers, a cycling `✻` status line with shimmer, block cursor, and `⎿`
+   headers, a cycling `✻` status line, block cursor, and `⎿`
    tool-result style sources. Pseudo-elements only; no copy or DOM changes. */
 :root {
   --wb-mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, "Microsoft YaHei", monospace;
@@ -313,16 +315,11 @@ h3 {font-size:17px!important;font-weight:550!important;}
 [data-testid="stChatMessage"] [data-testid="stExpander"] summary,
 [data-testid="stChatMessage"] [data-testid="stExpander"] summary > span {padding-left:0!important;margin-left:0!important;gap:0!important;}
 /* Status line: `✻ 正在思考… (12s)` — glyph cycles, label shimmers. */
-.generation-status {font-family:var(--wb-mono);font-size:13px;gap:10px;color:var(--cds-clay);}
+.generation-status {font-family:var(--wb-mono);font-size:13px;gap:10px;color:var(--wb-accent-text);}
 .generation-mark {font-size:0;width:14px;height:20px;display:inline-flex;align-items:center;justify-content:center;flex:none;animation:wb-working 1.6s ease-in-out infinite;}
 .generation-mark::before {
   content:"✻";font-size:19px;line-height:1;
   animation:wb-glyph 1.5s steps(1,end) infinite;
-}
-.generation-status > span:nth-child(2) {
-  background:linear-gradient(100deg,var(--cds-clay) 38%,color-mix(in srgb,var(--cds-clay) 35%,#fff) 50%,var(--cds-clay) 62%) 120% 0/260% 100%;
-  -webkit-background-clip:text;background-clip:text;color:transparent;
-  animation:wb-shimmer 2.2s linear infinite;
 }
 .generation-elapsed {margin-left:0;font:12px var(--wb-mono);color:var(--wb-subtle);}
 .generation-elapsed::before {content:"(";}
@@ -340,21 +337,21 @@ h3 {font-size:17px!important;font-weight:550!important;}
   font:600 16px/26px var(--wb-mono);color:var(--cds-clay);transition:opacity 160ms ease-out;
 }
 .st-key-prompt_surface:has(textarea:disabled)::before {opacity:.35;}
-.st-key-prompt_surface:focus-within {border-color:var(--cds-clay);box-shadow:0 0 0 3px var(--wb-clay-soft);}
+.st-key-prompt_surface:focus-within {border-color:var(--wb-focus);box-shadow:0 0 0 3px var(--wb-clay-soft);}
 .st-key-prompt_surface textarea {caret-color:var(--cds-clay);}
-.st-key-prompt_surface [data-testid="stChatInputSubmitButton"]:not(:disabled) {color:var(--cds-clay)!important;}
+.st-key-prompt_surface [data-testid="stChatInputSubmitButton"]:not(:disabled) {color:var(--wb-accent-text)!important;}
 .st-key-prompt_surface [data-testid="stChatInputSubmitButton"]:not(:disabled):hover {background:var(--wb-clay-soft)!important;}
-.composer-privacy {font-family:var(--wb-mono);font-size:10.5px;}
+.composer-privacy {font-family:var(--wb-mono);font-size:11.5px;}
 
 /* Sources: `⎿` tool-result style, not a boxed accordion. */
 [data-testid="stChatMessage"] [data-testid="stExpander"] {border:0;border-radius:0;background:transparent;margin-top:4px;}
 [data-testid="stChatMessage"] [data-testid="stExpander"] details {border:0;background:transparent;}
 [data-testid="stChatMessage"] [data-testid="stExpander"] summary {padding:2px 0;min-height:0;color:var(--wb-muted);transition:color 140ms ease-out;}
-[data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover {background:transparent;color:var(--cds-clay);}
+[data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover {background:transparent;color:var(--wb-accent-text);}
 [data-testid="stChatMessage"] [data-testid="stExpander"] summary p {font:12.5px/1.6 var(--wb-mono);}
 [data-testid="stChatMessage"] [data-testid="stExpander"] summary > span > span:has([data-testid="stIconMaterial"]) {display:none;}
 [data-testid="stChatMessage"] [data-testid="stExpander"] summary p::before {content:"⎿  ";color:var(--wb-subtle);white-space:pre;transition:color 140ms ease-out;}
-[data-testid="stChatMessage"] [data-testid="stExpander"] details[open] > summary p::before, [data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover p::before {color:var(--cds-clay);}
+[data-testid="stChatMessage"] [data-testid="stExpander"] details[open] > summary p::before, [data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover p::before {color:var(--wb-accent-text);}
 [data-testid="stChatMessage"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
   margin:2px 0 0 6px;padding:2px 0 4px 16px;border:0;border-left:1px solid var(--cds-border-strong);
 }
@@ -376,7 +373,6 @@ h3 {font-size:17px!important;font-weight:550!important;}
 @keyframes wb-glyph {
   0% {content:"·";} 17% {content:"✢";} 34% {content:"✳";} 50% {content:"✶";} 67% {content:"✻";} 84% {content:"✽";}
 }
-@keyframes wb-shimmer {from {background-position:120% 0;} to {background-position:-20% 0;}}
 @keyframes wb-bullet-pop {from {transform:scale(.3);opacity:0;} to {transform:scale(1);opacity:1;}}
 @keyframes wb-working {0%,100% {opacity:.7;} 50% {opacity:1;}}
 @media(max-width:767px) {
@@ -384,7 +380,6 @@ h3 {font-size:17px!important;font-weight:550!important;}
   [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"])::before {left:13px;top:9px;}
 }
 @media(prefers-reduced-motion:reduce) {
-  .generation-mark::before,.welcome-mark::before,.generation-status > span:nth-child(2),
+  .generation-mark::before,.welcome-mark::before,
   .welcome h1::after,.wb-message-enter [data-testid="stCaptionContainer"] p::before {animation:none!important;}
-  .generation-status > span:nth-child(2) {background:none;color:var(--cds-clay);-webkit-text-fill-color:currentColor;}
 }

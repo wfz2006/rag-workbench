@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from rag_workbench.application.knowledge import KnowledgeService
 
@@ -32,3 +33,18 @@ def test_retrieve_fuses_lexical_match_with_dense_ranking(settings):
     assert len(results) == 1
     assert "香蕉" in results[0].chunk.text
     assert results[0].passed_threshold
+
+
+def test_lexical_candidate_outside_dense_pool_still_gets_a_score(settings):
+    knowledge = KnowledgeService(settings, KeywordEmbedder())
+    knowledge.settings.top_k = 2
+    knowledge.settings.retrieval_candidate_pool = 1
+    knowledge.ingest("unrelated.md", "无关内容".encode())
+    knowledge.ingest("apple.md", "苹果".encode())
+    knowledge.ingest("banana.md", "香蕉".encode())
+
+    results = knowledge.retrieve("香蕉")
+
+    banana = next(result for result in results if "香蕉" in result.chunk.text)
+    assert banana.lexical_score > 0
+    assert banana.score == pytest.approx(0.9, abs=0.01)

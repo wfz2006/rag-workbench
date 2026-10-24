@@ -279,6 +279,103 @@ def test_file_settings_precedence_and_relative_paths(tmp_path, monkeypatch):
     assert repo.get_state("ui_settings") == {"top_k": 3}
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost.evil.com",
+        "http://127.0.0.1.evil.com",
+        "http://localhost@evil.com",
+        "ftp://localhost",
+        "https://",
+    ],
+)
+def test_llm_base_url_rejects_non_loopback_http(url):
+    from rag_workbench.config import Settings
+
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, llm_base_url=url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.com/v1",
+        "http://localhost:8000/v1",
+        "http://127.0.0.1:8000/v1",
+        "http://[::1]:8000/v1",
+    ],
+)
+def test_llm_base_url_accepts_https_and_exact_loopback(url):
+    from rag_workbench.config import Settings
+
+    assert Settings(_env_file=None, llm_base_url=url).llm_base_url == url
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "data_dir",
+        "model_cache",
+        "teaching_profile_path",
+        "domain_profile_path",
+        "retrieval_expansions_path",
+    ],
+)
+def test_settings_file_rejects_paths_escaping_the_pack(tmp_path, field):
+    from rag_workbench.config import load_file_settings
+
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    path = pack / "settings.json"
+    path.write_text(json.dumps({field: "../outside"}), encoding="utf-8")
+
+    with pytest.raises(AppError) as caught:
+        load_file_settings(path, env_file=None)
+    assert caught.value.code == "invalid_settings_file"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "data_dir",
+        "model_cache",
+        "teaching_profile_path",
+        "domain_profile_path",
+        "retrieval_expansions_path",
+    ],
+)
+def test_settings_file_rejects_absolute_paths(tmp_path, field):
+    from rag_workbench.config import load_file_settings
+
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    path = pack / "settings.json"
+    path.write_text(json.dumps({field: str(tmp_path / "outside")}), encoding="utf-8")
+
+    with pytest.raises(AppError) as caught:
+        load_file_settings(path, env_file=None)
+    assert caught.value.code == "invalid_settings_file"
+
+
+def test_embedding_revision_defaults_to_pinned_commit():
+    from rag_workbench.config import Settings
+
+    assert Settings(_env_file=None).embedding_revision == "7999e1d3359715c523056ef9478215996d62a620"
+
+
+def test_embedding_signature_includes_library_version(monkeypatch):
+    from rag_workbench.config import Settings
+    from rag_workbench.infrastructure import embedding
+
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(embedding, "_library_version", lambda: "one")
+    first = embedding.BgeEmbedder(settings).signature
+    monkeypatch.setattr(embedding, "_library_version", lambda: "two")
+    second = embedding.BgeEmbedder(settings).signature
+
+    assert first != second
+
+
 def test_collection_is_idempotent_and_retains_live_jobs(monkeypatch):
     from rag_workbench.ui import session_state as ui_state
 

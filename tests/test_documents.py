@@ -72,3 +72,10 @@ def test_chunk_invalid_configuration():
         Settings(chunk_size=100, chunk_overlap=100)
     with pytest.raises(ValueError):
         split_sections("doc", "a", [], 0, 0)
+
+
+def test_chunking_keeps_minimum_stride_for_near_size_overlap():
+    sections = parse_document("a.txt", ("资料" * 500).encode(), Settings())
+    chunks = split_sections("a" * 64, "a.txt", sections, 20, 19)
+    assert chunks
+    assert len(chunks) <= 250

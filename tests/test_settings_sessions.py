@@ -1,7 +1,10 @@
+import sqlite3
+
 import pytest
 
 from rag_workbench.bootstrap import build_services, load_settings, save_ui_settings
 from rag_workbench.config import Settings
+from rag_workbench.infrastructure.repository import Repository
 
 from .fakes import FakeEmbedder, FakeProvider
 
@@ -13,6 +16,25 @@ def test_settings_persist_without_secret_and_validate(settings):
     assert loaded.top_k == 8
     assert loaded.chunk_size == 120
     assert "api_key" not in services.repo.get_state("ui_settings")
+
+
+def test_v1_database_migrates_sessions_and_epoch(tmp_path):
+    path = tmp_path / "metadata.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    db.execute(
+        "INSERT INTO sessions VALUES ('s', '旧会话', '2026-01-01T00:00:00+00:00')"
+    )
+    db.execute("PRAGMA user_version=1")
+    db.commit()
+    db.close()
+
+    repo = Repository(path)
+
+    assert repo.sessions()[0]["updated_at"] == "2026-01-01T00:00:00+00:00"
+    assert repo.get_state("knowledge_epoch")
 
 
 def test_environment_overrides_saved_settings(settings, monkeypatch):

@@ -17,7 +17,7 @@ class Repository:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] > 1:
+            if db.execute("PRAGMA user_version").fetchone()[0] > 2:
                 raise AppError("schema_version", "数据库来自更新版本，请使用匹配的软件。")
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
@@ -28,15 +28,36 @@ class Repository:
                 );
                 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions (
-                    id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL
+                    id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
                     role TEXT NOT NULL, content TEXT NOT NULL, result TEXT, created_at TEXT NOT NULL
                 );
-                PRAGMA user_version=1;
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
+            if "updated_at" not in columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN updated_at TEXT")
+                db.execute("UPDATE sessions SET updated_at=created_at WHERE updated_at IS NULL")
+            epoch = db.execute(
+                "SELECT payload FROM state WHERE key='knowledge_epoch'"
+            ).fetchone()
+            if epoch is None:
+                db.execute(
+                    "INSERT INTO state VALUES ('knowledge_epoch',?)",
+                    (json.dumps(uuid.uuid4().hex),),
+                )
+            else:
+                try:
+                    json.loads(epoch[0])
+                except (TypeError, ValueError):
+                    db.execute(
+                        "UPDATE state SET payload=? WHERE key='knowledge_epoch'",
+                        (json.dumps(uuid.uuid4().hex),),
+                    )
+            db.execute("PRAGMA user_version=2")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -63,6 +84,7 @@ class Repository:
                 "INSERT OR REPLACE INTO documents VALUES (?,?)",
                 (document.id, document.model_dump_json()),
             )
+            self._bump_knowledge_epoch(db)
 
     def delete_unindexed_document(self, document_id: str) -> None:
         with self.connect() as db:
@@ -71,6 +93,14 @@ class Repository:
                 "(SELECT 1 FROM chunks WHERE document_id=?)",
                 (document_id, document_id),
             )
+            self._bump_knowledge_epoch(db)
+
+    @staticmethod
+    def _bump_knowledge_epoch(db: sqlite3.Connection) -> None:
+        db.execute(
+            "INSERT OR REPLACE INTO state VALUES ('knowledge_epoch',?)",
+            (json.dumps(uuid.uuid4().hex),),
+        )
 
     def chunks(self) -> list[Chunk]:
         with self.connect() as db:
@@ -102,11 +132,15 @@ class Repository:
                 [(c.id, c.document_id, i, c.model_dump_json()) for i, c in enumerate(chunks)],
             )
             db.execute("INSERT OR REPLACE INTO state VALUES ('active',?)", (json.dumps(active),))
+            self._bump_knowledge_epoch(db)
 
     def new_session(self) -> str:
         identity = uuid.uuid4().hex
+        now = utc_now()
         with self.connect() as db:
-            db.execute("INSERT INTO sessions VALUES (?,?,?)", (identity, "新会话", utc_now()))
+            db.execute(
+                "INSERT INTO sessions VALUES (?,?,?,?)", (identity, "新会话", now, now)
+            )
         return identity
 
     def sessions(self) -> list[dict]:
@@ -119,7 +153,7 @@ class Repository:
                     "WHERE key='session_title:' || s.id) "
                     "AS custom_title, (SELECT MIN(id) FROM messages WHERE session_id=s.id "
                     "AND role='assistant') AS first_assistant_id "
-                    "FROM sessions s ORDER BY s.created_at DESC"
+                    "FROM sessions s ORDER BY COALESCE(s.updated_at, s.created_at) DESC"
                 )
             ]
 
@@ -139,7 +173,10 @@ class Repository:
         if not title or len(title) > 80:
             raise AppError("invalid_title", "会话名称需为 1–80 个字符。")
         with self.connect() as db:
-            db.execute("UPDATE sessions SET title=? WHERE id=?", (title, identity))
+            db.execute(
+                "UPDATE sessions SET title=?, updated_at=? WHERE id=?",
+                (title, utc_now(), identity),
+            )
             db.execute(
                 "INSERT OR REPLACE INTO state VALUES (?, 'true')", (f"session_title:{identity}",)
             )
@@ -177,6 +214,7 @@ class Repository:
                 self._retitle(
                     db, session_id, question["content"], remaining[0] if remaining else "新会话"
                 )
+            db.execute("UPDATE sessions SET updated_at=? WHERE id=?", (utc_now(), session_id))
 
     @staticmethod
     def _failed_pair(db, session_id: str, assistant_id: int):
@@ -199,7 +237,7 @@ class Repository:
         db.execute(
             "UPDATE sessions SET title=? WHERE id=? AND title=? "
             "AND NOT EXISTS(SELECT 1 FROM state WHERE key=?)",
-            (new_question[:32], session_id, old_question[:32], f"session_title:{session_id}"),
+            (new_question[:80], session_id, old_question[:80], f"session_title:{session_id}"),
         )
 
     def validate_retry(self, session_id: str, assistant_id: int) -> int:
@@ -232,20 +270,23 @@ class Repository:
             ).fetchone()[0]
             if first == user["id"]:
                 self._retitle(db, session_id, user["content"], question)
+            db.execute("UPDATE sessions SET updated_at=? WHERE id=?", (utc_now(), session_id))
 
     def save_turn(self, session_id: str, question: str, result: AnswerResult) -> None:
         with self.connect() as db:
+            now = utc_now()
             db.execute(
-                "UPDATE sessions SET title=? WHERE id=? AND title='新会话' "
+                "UPDATE sessions SET title=?, updated_at=? WHERE id=? AND title='新会话' "
                 "AND NOT EXISTS(SELECT 1 FROM messages WHERE session_id=?) "
                 "AND NOT EXISTS(SELECT 1 FROM state WHERE key=?)",
-                (question[:32], session_id, session_id, f"session_title:{session_id}"),
+                (question[:80], now, session_id, session_id, f"session_title:{session_id}"),
             )
+            db.execute("UPDATE sessions SET updated_at=? WHERE id=?", (now, session_id))
             db.executemany(
                 "INSERT INTO messages (session_id,role,content,result,created_at) "
                 "VALUES (?,?,?,?,?)",
                 [
-                    (session_id, "user", question, None, utc_now()),
-                    (session_id, "assistant", result.answer, result.model_dump_json(), utc_now()),
+                    (session_id, "user", question, None, now),
+                    (session_id, "assistant", result.answer, result.model_dump_json(), now),
                 ],
             )

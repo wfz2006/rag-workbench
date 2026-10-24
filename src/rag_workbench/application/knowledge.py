@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import re
 from contextlib import contextmanager
 from pathlib import Path
@@ -19,7 +20,7 @@ from rag_workbench.application.retrieval_expansion import (
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.models import Chunk, Document, ImportFailure, RetrievalResult
-from rag_workbench.domain.ports import Embedder
+from rag_workbench.domain.ports import Embedder, VectorArray
 from rag_workbench.infrastructure.chunking import split_sections
 from rag_workbench.infrastructure.lexical import BM25Index, reciprocal_rank_fusion
 from rag_workbench.infrastructure.parsing import (
@@ -28,9 +29,11 @@ from rag_workbench.infrastructure.parsing import (
     safe_display_name,
 )
 from rag_workbench.infrastructure.repository import Repository
-from rag_workbench.infrastructure.vector_store import FaissStore
+from rag_workbench.infrastructure.vector_store import FaissStore, normalized
 
 QUOTE_CONTEXT_LIMIT = 4
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeService:
@@ -57,17 +60,11 @@ class KnowledgeService:
             raise AppError("knowledge_busy", "知识库正在更新，等待超时，请稍后重试。") from exc
 
     def _snapshot(self):
-        paths = [self.repo.path, self.repo.path.with_name(self.repo.path.name + "-wal")]
-        stamp = []
-        for path in paths:
-            try:
-                info = path.stat()
-                stamp.append((info.st_mtime_ns, info.st_size))
-            except FileNotFoundError:
-                stamp.append(None)  # A chat commit may checkpoint and remove the WAL concurrently.
-        stamp = tuple(stamp)
-        if self._snapshot_cache is None or self._snapshot_cache[0] != stamp:
-            self._snapshot_cache = (stamp, self.repo.chunks(), self.repo.get_state("active"))
+        epoch = self.repo.get_state("knowledge_epoch")
+        if self._snapshot_cache is None or self._snapshot_cache[0] != epoch:
+            chunks = self.repo.chunks()
+            active = self.repo.get_state("active")
+            self._snapshot_cache = (epoch, chunks, active)
             self._source_catalog = {d.id: d for d in self.repo.documents()}
         return self._snapshot_cache[1:]
 
@@ -77,9 +74,16 @@ class KnowledgeService:
             "embedding": self.embedder.signature,
             "size": self.settings.chunk_size,
             "overlap": self.settings.chunk_overlap,
-            "chunking_version": 2,
+            "chunking_version": 3,
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+    def _build_limits(self) -> dict[str, int]:
+        return {
+            "max_upload_mb": self.settings.max_upload_mb,
+            "max_text_chars": self.settings.max_text_chars,
+            "max_pdf_pages": self.settings.max_pdf_pages,
+        }
 
     def _raw_path(self, document: Document) -> Path:
         if not re.fullmatch(r"[0-9a-f]{64}", document.id) or document.extension not in {
@@ -115,8 +119,14 @@ class KnowledgeService:
                         if not data or len(data) > self.settings.max_upload_mb * 1024 * 1024:
                             raise AppError("invalid_upload", "上传文件为空或超过大小限制。")
                         identity = hashlib.sha256(data).hexdigest()
-                        if identity in staged or (
-                            identity in catalog and catalog[identity].status == "ready"
+                        if identity in staged:
+                            selected.append(identity)
+                            continue
+                        existing = catalog.get(identity)
+                        if (
+                            existing is not None
+                            and existing.status == "ready"
+                            and self._raw_matches(existing, data)
                         ):
                             selected.append(identity)
                             continue
@@ -136,8 +146,14 @@ class KnowledgeService:
                         ),
                         data,
                     )
-                if not staged and not any(d.status == "pending" for d in catalog.values()):
-                    return [catalog[item] if isinstance(item, str) else item for item in selected]
+                if (
+                    not staged
+                    and not any(d.status == "pending" for d in catalog.values())
+                    and not self._active_requires_rebuild()
+                ):
+                    return [
+                        catalog[item] if isinstance(item, str) else item for item in selected
+                    ]
                 for identity, (document, data) in staged.items():
                     self.store._durable_write(self._raw_path(document), data)
                     catalog[identity] = document
@@ -168,8 +184,49 @@ class KnowledgeService:
                 "ingest_failed", "文档导入失败，原活动索引未被替换，请检查磁盘后重试。"
             ) from exc
 
+    def _raw_matches(self, document: Document, data: bytes) -> bool:
+        try:
+            return self._raw_path(document).read_bytes() == data
+        except OSError:
+            return False
+
+    def _active_requires_rebuild(self) -> bool:
+        chunks = self.repo.chunks()
+        if not chunks:
+            return False
+        active = self.repo.get_state("active")
+        if not active:
+            return True
+        try:
+            self.store.load(active, chunks, self.signature)
+        except AppError as exc:
+            # A settings-only mismatch is resolved by the explicit rebuild action.
+            return exc.code != "index_incompatible"
+        return False
+
+    def _reusable_snapshot(self) -> dict[str, tuple[list[Chunk], VectorArray]]:
+        chunks = self.repo.chunks()
+        active = self.repo.get_state("active")
+        if not chunks or not active or active.get("signature") != self.signature:
+            return {}
+        if active.get("limits") != self._build_limits():
+            return {}
+        try:
+            index = self.store.load(active, chunks, self.signature)
+            vectors = index.reconstruct_n(0, index.ntotal)
+        except AppError:
+            return {}
+        positions: dict[str, list[int]] = {}
+        for position, chunk in enumerate(chunks):
+            positions.setdefault(chunk.document_id, []).append(position)
+        return {
+            document_id: ([chunks[i] for i in indexes], vectors[indexes])
+            for document_id, indexes in positions.items()
+        }
+
     def _rebuild(self, documents: list[Document], *, retry_failed: bool = False) -> None:
         chunks, arrays, catalog = [], [], []
+        reusable = self._reusable_snapshot()
         for document in documents:
             if document.status == "failed" and not retry_failed:
                 catalog.append(document)
@@ -183,6 +240,16 @@ class KnowledgeService:
                     ) from exc
                 if hashlib.sha256(data).hexdigest() != document.id:
                     raise AppError("original_corrupt", "原始文件哈希不匹配，请恢复正确原件后重建。")
+                reused = reusable.get(document.id)
+                if document.status == "ready" and reused and reused[0]:
+                    chunks.extend(reused[0])
+                    arrays.append(reused[1])
+                    catalog.append(
+                        document.model_copy(
+                            update={"status": "ready", "error": None, "error_code": None}
+                        )
+                    )
+                    continue
                 sections = parse_document(document.name, data, self.settings)
                 current = split_sections(
                     document.id,
@@ -215,6 +282,7 @@ class KnowledgeService:
                 )
         vectors = np.concatenate(arrays) if arrays else np.empty((0, 1), dtype=np.float32)
         active = self.store.prepare(chunks, vectors, self.signature)
+        active["limits"] = self._build_limits()
         self.repo.publish(catalog, chunks, active)
         self._snapshot_cache = None
         self._lexical_cache = None
@@ -238,22 +306,54 @@ class KnowledgeService:
                 if not document:
                     raise AppError("not_found", "文档不存在或已删除。")
                 chunks = self.repo.chunks()
-                if any(c.document_id == document_id for c in chunks):
-                    active = self.repo.get_state("active") or {}
+                indexed = any(c.document_id == document_id for c in chunks)
+                active = self.repo.get_state("active") or {}
+                if indexed:
                     kept, updated = self.store.without_document(active, chunks, document_id)
+                    updated["limits"] = active.get("limits")
                     self.repo.publish([d for d in documents if d.id != document_id], kept, updated)
                 else:
                     self.repo.delete_unindexed_document(document_id)
                 self._snapshot_cache = None
                 self._lexical_cache = None
-                # Only after commit: removal is safe even if interruption leaves a raw orphan.
-                self._archive_original(document)
+                try:
+                    self._archive_original(document)
+                except Exception as exc:
+                    self._rollback_delete(document, documents, chunks, active, indexed)
+                    raise AppError(
+                        "delete_failed",
+                        "删除未完成，文档已保留；请确认回收目录可写且原件未被占用后重试。",
+                    ) from exc
         except AppError:
             raise
         except Exception as exc:
             raise AppError(
                 "delete_failed", "删除未能完整完成，请刷新列表检查；原件仍保留。"
             ) from exc
+
+    def _rollback_delete(
+        self,
+        document: Document,
+        documents: list[Document],
+        chunks: list[Chunk],
+        active: dict,
+        indexed: bool,
+    ) -> None:
+        try:
+            if indexed:
+                self.repo.publish(documents, chunks, active)
+            else:
+                self.repo.save_document(document)
+        except Exception as exc:
+            raise AppError(
+                "delete_failed",
+                "删除未完成且状态回滚失败；请刷新列表并检查数据库、索引与原件。",
+            ) from exc
+        finally:
+            # Metadata is written before the move; a failed move leaves it behind.
+            (self.root / "trash" / f"{document.id}.json").unlink(missing_ok=True)
+            self._snapshot_cache = None
+            self._lexical_cache = None
 
     def _archive_original(self, document: Document) -> None:
         target = self.root / "trash" / f"{document.id}{document.extension}"
@@ -322,6 +422,7 @@ class KnowledgeService:
                     raise AppError("dimension_mismatch", "恢复向量与活动索引维度不兼容。")
                 vectors = np.concatenate([old_vectors, vectors])
             updated = self.store.prepare(chunks + current, vectors, self.signature)
+            updated["limits"] = active.get("limits") if active else self._build_limits()
             restored = document.model_copy(
                 update={"status": "ready", "error": None, "error_code": None}
             )
@@ -340,10 +441,14 @@ class KnowledgeService:
             self._snapshot_cache = None
             self._lexical_cache = None
             archive = self.root / "trash" / "restored" / updated["generation"]
-            archive.mkdir(parents=True, exist_ok=True)
-            path.replace(archive / path.name)
             raw = self.root / "trash" / f"{document_id}{document.extension}"
-            raw.replace(archive / raw.name)
+            try:
+                archive.mkdir(parents=True, exist_ok=True)
+                path.replace(archive / path.name)
+                raw.replace(archive / raw.name)
+            except OSError:
+                # The restored document is already committed; a stale trash copy is harmless.
+                logger.warning("restore cleanup failed; trash copy retained")
             return restored
 
     def list_documents(self) -> list[Document]:
@@ -423,18 +528,13 @@ class KnowledgeService:
                 raise AppError("index_corrupt", "文本块存在但活动索引缺失，请重新索引。")
             index = self.store.load(active, chunks, self.signature)
             expanded = expand_query(question, self.expansions)
-            query = self.embedder.encode_query(expanded.text)
+            query = normalized(self.embedder.encode_query(expanded.text), 1)
             window = self.settings.retrieval_context_window
-            results = self.store.search_loaded(
-                index,
-                chunks,
-                query,
-                len(chunks),
-            )
+            pool = max(self.settings.top_k, self.settings.retrieval_candidate_pool)
+            results = self.store.search_loaded(index, chunks, query, min(pool, len(chunks)))
             dense_scores = {chunk.id: score for chunk, score in results}
             chunk_indices = {chunk.id: index for index, chunk in enumerate(chunks)}
             dense_ranking = [chunk_indices[chunk.id] for chunk, _ in results]
-            pool = max(self.settings.top_k, self.settings.retrieval_candidate_pool)
             rankings = [dense_ranking[:pool]]
             if self._lexical_cache is None or self._lexical_cache[0] is not chunks:
                 self._lexical_cache = (chunks, BM25Index([chunk.text for chunk in chunks]))
@@ -456,12 +556,27 @@ class KnowledgeService:
                 for index in reciprocal_rank_fusion(rankings)
                 if self._spoiler_allowed(chunks[index])
             ]
+            # Lexical-only candidates may fall outside the dense candidate pool.
+            chunks_by_document: dict[str, list[Chunk]] = {}
+            chunks_by_ordinal: dict[tuple[str, int], Chunk] = {}
+            for chunk in chunks:
+                chunks_by_document.setdefault(chunk.document_id, []).append(chunk)
+                chunks_by_ordinal[(chunk.document_id, chunk.ordinal)] = chunk
+
+            def dense_score(chunk: Chunk) -> float:
+                score = dense_scores.get(chunk.id)
+                if score is None:
+                    vector = index.reconstruct(int(chunk_indices[chunk.id]))
+                    score = float(np.clip(np.dot(vector, query[0]), -1, 1))
+                    dense_scores[chunk.id] = score
+                return score
+
             primary = [
                 RetrievalResult(
                     chunk=chunks[index],
-                    score=dense_scores[chunks[index].id],
+                    score=dense_score(chunks[index]),
                     passed_threshold=(
-                        dense_scores[chunks[index].id] >= self.settings.similarity_threshold
+                        dense_score(chunks[index]) >= self.settings.similarity_threshold
                     ),
                     lexical_score=lexical_scores[index],
                     original_page=self._source_catalog[chunks[index].document_id].source_page,
@@ -474,14 +589,8 @@ class KnowledgeService:
             ]
             if not window:
                 return primary
-            scored = {
-                (chunk.document_id, chunk.ordinal): (chunk, score) for chunk, score in results
-            }
             selected = {item.chunk.id: item for item in primary}
             neighborhoods = []
-            by_document = {}
-            for chunk, score in results:
-                by_document.setdefault(chunk.document_id, []).append((chunk, score))
             context_limit = len(primary) + 20
             if question_type(coverage_question or question) == "quote":
                 seeds = {}
@@ -489,9 +598,9 @@ class KnowledgeService:
                     if seed.eligible:
                         seeds.setdefault(seed.chunk.document_id, seed)
                 quote_candidates = [
-                    (chunk, score, seeds[document_id])
+                    (chunk, dense_score(chunk), seeds[document_id])
                     for document_id in seeds
-                    for chunk, score in by_document.get(document_id, [])
+                    for chunk in chunks_by_document.get(document_id, [])
                     if contains_quote(chunk.text)
                     and self._spoiler_allowed(chunk)
                     and (chunk.id not in selected or not selected[chunk.id].eligible)
@@ -516,13 +625,13 @@ class KnowledgeService:
                 neighbors = []
                 for distance in range(1, window + 1):
                     for ordinal in (seed.chunk.ordinal - distance, seed.chunk.ordinal + distance):
-                        neighbor = scored.get((seed.chunk.document_id, ordinal))
+                        neighbor = chunks_by_ordinal.get((seed.chunk.document_id, ordinal))
                         if (
                             neighbor is not None
-                            and neighbor[0].id != seed.chunk.id
-                            and self._spoiler_allowed(neighbor[0])
+                            and neighbor.id != seed.chunk.id
+                            and self._spoiler_allowed(neighbor)
                         ):
-                            neighbors.append(neighbor)
+                            neighbors.append((neighbor, dense_score(neighbor)))
                 source = self._source_catalog[seed.chunk.document_id]
                 if source.source_group is not None and source.source_page is not None:
                     adjacent = sorted(
@@ -541,16 +650,15 @@ class KnowledgeService:
                     )
                     for other in adjacent:
                         page_chunks = [
-                            pair
-                            for pair in by_document.get(other.id, [])
-                            if self._spoiler_allowed(pair[0])
+                            chunk
+                            for chunk in chunks_by_document.get(other.id, [])
+                            if self._spoiler_allowed(chunk)
                         ]
                         if page_chunks:
                             # One adjoining boundary, never an entire adjacent page document.
                             boundary = max if other.source_page < source.source_page else min
-                            neighbors.append(
-                                boundary(page_chunks, key=lambda pair: pair[0].ordinal)
-                            )
+                            chunk = boundary(page_chunks, key=lambda item: item.ordinal)
+                            neighbors.append((chunk, dense_score(chunk)))
                 neighbors.sort(key=lambda pair: -pair[1])
                 outside = []
                 for chunk, score in neighbors:

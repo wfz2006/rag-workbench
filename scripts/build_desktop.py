@@ -183,7 +183,7 @@ def build(output: Path, *, include_model: bool, archive: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT / "dist/RAG-Workbench-0.1.9-win-x64")
+    parser.add_argument("--output", type=Path, default=ROOT / "dist/RAG-Workbench-0.1.10-win-x64")
     parser.add_argument("--include-model", action="store_true")
     parser.add_argument("--zip", action="store_true")
     args = parser.parse_args()

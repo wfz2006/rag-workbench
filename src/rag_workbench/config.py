@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Self
+from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
@@ -48,7 +49,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=2048, ge=256, le=16384)
     deepseek_mode: bool = True
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
-    embedding_revision: str = ""
+    embedding_revision: str = "7999e1d3359715c523056ef9478215996d62a620"
     embedding_device: str = "cpu"
     query_instruction: str = "为这个句子生成表示以用于检索相关文章："
     top_k: int = Field(default=5, ge=1, le=20)
@@ -86,7 +87,11 @@ class Settings(BaseSettings):
     def validate_settings(self) -> Self:
         if self.chunk_overlap >= self.chunk_size:
             raise ValueError("Chunk Overlap 必须小于 Chunk Size")
-        if not self.llm_base_url.startswith(("https://", "http://localhost", "http://127.0.0.1")):
+        parsed = urlsplit(self.llm_base_url)
+        loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        if parsed.scheme == "https" and parsed.hostname:
+            pass
+        elif parsed.scheme != "http" or not loopback:
             raise ValueError("LLM Base URL 必须使用 HTTPS 或本机 HTTP")
         if not self.embedding_model.strip():
             raise ValueError("Embedding 模型不能为空")
@@ -132,6 +137,7 @@ def load_file_settings(
             Settings.model_fields.keys() - {"api_key"}
         ):
             raise ValueError("unknown or secret setting")
+        base = path.resolve().parent
         for key in (
             "data_dir",
             "model_cache",
@@ -146,7 +152,14 @@ def load_file_settings(
                         raise ValueError("invalid storage path")
                     values[key] = None
                 else:
-                    values[key] = path.resolve().parent / value
+                    # A shared pack must not be able to read or write outside its own directory.
+                    candidate = Path(value)
+                    if candidate.is_absolute():
+                        raise ValueError(f"{key} must be relative")
+                    resolved = (base / candidate).resolve()
+                    if not resolved.is_relative_to(base):
+                        raise ValueError(f"{key} escapes the settings directory")
+                    values[key] = resolved
         # Treat an explicit chunk setting as a pair; do not inherit an unrelated env sibling.
         if {"chunk_size", "chunk_overlap"} & values.keys():
             for key in ("chunk_size", "chunk_overlap"):

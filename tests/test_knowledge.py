@@ -5,8 +5,20 @@ import pytest
 
 from rag_workbench.application.knowledge import KnowledgeService
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.models import AnswerResult, Inspection
+
+from .fakes import FakeEmbedder
 
 TEXT = "资料保管期限为三年。到期后应进行复核。".encode()
+
+
+class CountingEmbedder(FakeEmbedder):
+    def __init__(self):
+        self.document_calls = []
+
+    def encode_documents(self, texts):
+        self.document_calls.append(list(texts))
+        return super().encode_documents(texts)
 
 
 def test_empty_kb_does_not_load_embedding(knowledge, embedder):
@@ -121,3 +133,75 @@ def test_manifest_tampering_is_detected(knowledge):
     path.write_text(json.dumps(manifest))
     with pytest.raises(AppError):
         knowledge.retrieve("保管")
+
+
+def test_incremental_ingest_reuses_unchanged_documents(settings):
+    embedder = CountingEmbedder()
+    knowledge = KnowledgeService(settings, embedder)
+    knowledge.ingest("a.txt", TEXT)
+    embedder.document_calls.clear()
+
+    knowledge.ingest("b.txt", TEXT + " 新增内容".encode())
+
+    assert len(embedder.document_calls) == 1
+    assert all("新增内容" in text for text in embedder.document_calls[0])
+    embedder.document_calls.clear()
+    knowledge.rebuild()
+    assert embedder.document_calls == []
+
+
+def test_duplicate_upload_repairs_missing_original(knowledge):
+    document = knowledge.ingest("manual.txt", TEXT)
+    raw = knowledge._raw_path(document)
+    raw.unlink()
+
+    repaired = knowledge.ingest("manual.txt", TEXT)
+
+    assert repaired.id == document.id and repaired.status == "ready"
+    assert raw.exists()
+
+
+def test_duplicate_upload_repairs_corrupt_active_index(knowledge):
+    document = knowledge.ingest("manual.txt", TEXT)
+    active = knowledge.repo.get_state("active")
+    (knowledge.root / "indexes" / active["generation"] / "index.faiss").write_bytes(
+        b"not a faiss index"
+    )
+
+    repaired = knowledge.ingest("manual.txt", TEXT)
+
+    assert repaired.status == "ready"
+    assert knowledge.retrieve("保管")[0].chunk.document_id == document.id
+
+
+def test_chat_save_does_not_invalidate_snapshot_cache(knowledge):
+    knowledge.ingest("manual.txt", TEXT)
+    knowledge.retrieve("保管")
+    cached = knowledge._snapshot_cache
+    session = knowledge.repo.new_session()
+    knowledge.repo.save_turn(
+        session,
+        "问题",
+        AnswerResult(answer="ok", mode="general", debug=Inspection(question="问题")),
+    )
+
+    knowledge.retrieve("保管")
+
+    assert knowledge._snapshot_cache is cached
+
+
+def test_sessions_order_by_latest_message_and_store_long_titles(knowledge):
+    repo = knowledge.repo
+    older = repo.new_session()
+    newer = repo.new_session()
+    question = "长" * 90
+    repo.save_turn(
+        older,
+        question,
+        AnswerResult(answer="ok", mode="general", debug=Inspection(question=question)),
+    )
+
+    sessions = repo.sessions()
+
+    assert [session["id"] for session in sessions[:2]] == [older, newer]
+    assert next(s for s in sessions if s["id"] == older)["title"] == question[:80]

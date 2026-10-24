@@ -2,6 +2,7 @@ import hashlib
 import json
 import threading
 from functools import lru_cache
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 import numpy as np
@@ -12,6 +13,13 @@ from rag_workbench.domain.models import Chunk
 from rag_workbench.domain.ports import VectorArray
 
 _MODEL_LOCK = threading.RLock()
+
+
+def _library_version() -> str:
+    try:
+        return version("sentence-transformers")
+    except PackageNotFoundError:
+        return "unknown"
 
 
 @lru_cache(maxsize=2)
@@ -34,6 +42,7 @@ class BgeEmbedder:
             "model": self.settings.embedding_model,
             "revision": self.settings.embedding_revision,
             "instruction": self.settings.query_instruction,
+            "library": _library_version(),
             "adapter": 2,
         }
         return hashlib.sha256(json.dumps(configuration, sort_keys=True).encode()).hexdigest()

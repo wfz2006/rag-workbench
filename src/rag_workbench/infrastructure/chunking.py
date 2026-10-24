@@ -50,5 +50,6 @@ def split_sections(
                 )
             if end == len(section.text):
                 break
-            start = max(start + 1, end - overlap)
+            # Keep a minimum stride so near-size overlap cannot create one chunk per character.
+            start = max(start + max(1, size // 4), end - overlap)
     return chunks

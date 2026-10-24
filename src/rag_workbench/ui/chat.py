@@ -165,7 +165,7 @@ def _composer(services: Services, session_id: str, job: GenerationJob | None) ->
                 )
             hint.html(
                 '<span class="composer-privacy" title="检索片段与必要对话可能发送至远程模型。">'
-                "片段可能发送至模型 · 请核实信息。</span>"
+                "片段可能发送至模型</span>"
             )
             with model.popover(services.settings.llm_model, key="composer_model"):
                 st.html(

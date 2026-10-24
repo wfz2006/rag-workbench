@@ -26,9 +26,6 @@ def document_rows(documents):
             "文档名称": d.name,
             "状态": DOCUMENT_LABELS[d.status],
             "上传时间": datetime.fromisoformat(d.created_at).astimezone().strftime("%m-%d %H:%M"),
-            "错误": d.error or "",
-            "大小 KB": round(d.size / 1024, 1),
-            "短 ID": d.id[:12],
         }
         for d in documents
     ]
@@ -142,22 +139,18 @@ def knowledge_page(services: Services) -> None:
     if not documents:
         st.info("这里还没有资料。使用上方上传区建立你的第一个知识库。")
     else:
-        st.caption("按上传时间从新到旧排列；同一时间按文件名排列。完整 ID 可在下方详情中查看。")
+        st.caption("按上传时间从新到旧排列；同一时间按文件名排列。")
         st.dataframe(
             document_rows(documents),
             hide_index=True,
             width="stretch",
             column_config={
-                "文档名称": st.column_config.TextColumn(width=190),
-                "状态": st.column_config.TextColumn(width=75),
-                "上传时间": st.column_config.TextColumn(width=140, help="本地时间（月-日 时:分）"),
-                "错误": st.column_config.TextColumn(
-                    width=85, help="完整错误可在下方所选文档详情查看"
-                ),
-                "大小 KB": st.column_config.NumberColumn(width=75),
-                "短 ID": st.column_config.TextColumn(width=130, help="文档 SHA-256 的前 12 位"),
+                "文档名称": st.column_config.TextColumn(width=180),
+                "状态": st.column_config.TextColumn(width=60),
+                "上传时间": st.column_config.TextColumn(width=90, help="本地时间（月-日 时:分）"),
             },
         )
+        st.caption("完整 ID、大小与错误见下方所选文档详情。")
         options = {d.id: d for d in documents}
         selected = st.selectbox(
             "选择要移除的文档",
@@ -167,6 +160,7 @@ def knowledge_page(services: Services) -> None:
         with st.expander("所选文档的完整标识与状态详情"):
             st.code(selected, language=None)
             st.write(DOCUMENT_LABELS[options[selected].status])
+            st.caption(f"大小：{options[selected].size / 1024:.1f} KB")
             if options[selected].error:
                 st.warning(options[selected].error)
                 st.caption(f"错误码：{options[selected].error_code or '未记录'}")
