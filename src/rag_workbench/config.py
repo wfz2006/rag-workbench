@@ -42,6 +42,8 @@ class Settings(BaseSettings):
 
     api_key: SecretStr = Field(default=SecretStr(""), validation_alias="DEEPSEEK_API_KEY")
     data_dir: Path = Path("data/production")
+    packs_dir: Path = Path("knowledge_packs")
+    packs_data_dir: Path = Path("data")
     model_cache: Path = Path(".cache/models")
     llm_model: str = Field(default="deepseek-flash", min_length=1, max_length=160)
     llm_base_url: str = "https://api.deepseek.com"
@@ -95,8 +97,13 @@ class Settings(BaseSettings):
             raise ValueError("LLM Base URL 必须使用 HTTPS 或本机 HTTP")
         if not self.embedding_model.strip():
             raise ValueError("Embedding 模型不能为空")
+        for name in ("packs_dir", "packs_data_dir"):
+            if not str(getattr(self, name)).strip() or str(getattr(self, name)).strip() == ".":
+                raise ValueError(f"{name} 不能为空或当前目录")
         return self
 
+
+DEPLOYMENT_ONLY_SETTINGS = frozenset({"packs_dir", "packs_data_dir"})
 
 EDITABLE_SETTINGS = frozenset(
     {
@@ -134,7 +141,7 @@ def load_file_settings(
             raise ValueError("oversized")
         values = json.loads(raw.decode("utf-8-sig"))
         if not isinstance(values, dict) or set(values) - (
-            Settings.model_fields.keys() - {"api_key"}
+            Settings.model_fields.keys() - {"api_key"} - DEPLOYMENT_ONLY_SETTINGS
         ):
             raise ValueError("unknown or secret setting")
         base = path.resolve().parent

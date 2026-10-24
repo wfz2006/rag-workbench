@@ -134,3 +134,10 @@ CSS 使用原生组件稳定选择器，主题由 Streamlit 管理，支持减�
 - 回答管线施加解释直答约束：对 general/meaning 施加硬性截断（上限 2 条事实论点，控制长度），同时对 quote/title 豁免硬截断以保留原话完整性。
 
 
+
+## 知识包审核、冻结与评测
+
+- `application/pack_authoring.py`：从真实 chunk 采样，调用已配置的 ChatProvider 起草 profile 或带锚点的评测题。产物只写 `profile.draft.md` / `eval/candidates.jsonl`，不自动替换已审核内容；确定性检查 chunk 归属、题目去重、离线可达性和负例风险。
+- `application/pack_review.py`：人工采纳 profile（写历史、内容哈希和审核记录）、审核候选、按 dev/holdout 冻结。冻结目录 `eval/freezes/fNNN/` 固定 profile、settings、正文清单和 labels 的 SHA-256，并维护 `eval/current.json`；holdout 一次性使用，记录 run_id 和时间。
+- `application/pack_evaluation.py`：只运行当前冻结版本；profile/settings/正文清单或 labels 哈希不一致时拒绝运行。holdout 在非全服务错误时消耗，在线评测需费用确认。报告 `eval/runs/<version>/<run_id>/` 包含指标、逐题结果和规则化诊断；检索/路由/引用问题可自动分类，答案事实正确性只能人工核对。
+- LLM 只作提案者：未经人工采用不改变 profile/评测集；系统不自动调参、不自动签发合规结论，也不把 smoke 自检当验收。

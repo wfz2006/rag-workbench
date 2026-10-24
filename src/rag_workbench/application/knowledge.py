@@ -25,6 +25,7 @@ from rag_workbench.infrastructure.chunking import split_sections
 from rag_workbench.infrastructure.lexical import BM25Index, reciprocal_rank_fusion
 from rag_workbench.infrastructure.parsing import (
     ALLOWED_EXTENSIONS,
+    SUPPORTED_FORMATS_LABEL,
     parse_document,
     safe_display_name,
 )
@@ -86,11 +87,10 @@ class KnowledgeService:
         }
 
     def _raw_path(self, document: Document) -> Path:
-        if not re.fullmatch(r"[0-9a-f]{64}", document.id) or document.extension not in {
-            ".txt",
-            ".md",
-            ".pdf",
-        }:
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", document.id)
+            or document.extension not in ALLOWED_EXTENSIONS
+        ):
             raise AppError("invalid_document", "文档标识无效，请检查元数据。")
         return self.root / "originals" / f"{document.id}{document.extension}"
 
@@ -115,7 +115,9 @@ class KnowledgeService:
                         name = safe_display_name(raw_name)
                         extension = Path(name).suffix.lower()
                         if extension not in ALLOWED_EXTENSIONS:
-                            raise AppError("unsupported_type", "仅支持 TXT、Markdown 和 PDF。")
+                            raise AppError(
+                                "unsupported_type", f"仅支持 {SUPPORTED_FORMATS_LABEL}。"
+                            )
                         if not data or len(data) > self.settings.max_upload_mb * 1024 * 1024:
                             raise AppError("invalid_upload", "上传文件为空或超过大小限制。")
                         identity = hashlib.sha256(data).hexdigest()

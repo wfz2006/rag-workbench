@@ -48,26 +48,33 @@ def evaluate(pipeline: RagPipeline, cases: list[EvalCase], *, with_routing: bool
             eligible_recalls.append(len(eligible_found & relevant) / len(relevant))
         else:
             irrelevant_hits.append(any(r.eligible for r in candidates))
+        citation_ok = None
         if result:
             routes.append(result.mode == case.expected_mode)
             if result.mode == "knowledge_base":
                 actual = {r.chunk.id for r in candidates if r.eligible}
-                citations.append(
-                    bool(result.sources)
-                    and all(
-                        r.chunk.id in actual and f"[{r.chunk.id}]" in result.answer
-                        for r in result.sources
-                    )
+                citation_ok = bool(result.sources) and all(
+                    r.chunk.id in actual and f"[{r.chunk.id}]" in result.answer
+                    for r in result.sources
                 )
+                citations.append(citation_ok)
         errors += int(error is not None)
         rows.append(
             {
                 "id": case.id,
                 "question": case.question,
+                "expected_mode": case.expected_mode,
+                "relevant_document_ids": sorted(relevant),
                 "error_code": error,
                 "mode": result.mode if result else None,
+                "route_reason": result.debug.reason if result else None,
+                "answer": result.answer if result else None,
+                "cited_chunk_ids": [r.chunk.id for r in result.sources] if result else [],
+                "citation_valid": citation_ok,
                 "retrieved_document_ids": sorted(found),
                 "eligible_document_ids": sorted(eligible_found),
+                "retrieved_chunk_ids": [r.chunk.id for r in candidates],
+                "eligible_chunk_ids": [r.chunk.id for r in candidates if r.eligible],
                 "candidate_scores": [r.score for r in candidates],
                 "candidates": [r.model_dump() for r in candidates],
             }

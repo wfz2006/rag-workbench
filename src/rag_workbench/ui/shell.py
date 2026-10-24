@@ -6,10 +6,28 @@ from pathlib import Path
 
 import streamlit as st
 
+from rag_workbench.application.packs import PackCatalog
 from rag_workbench.bootstrap import Services
 from rag_workbench.ui.session_state import collect_finished_jobs
 
-PAGES = ["AI 聊天", "知识库管理", "系统设置", "检索调试"]
+PAGES = ["AI 聊天", "知识库管理", "知识包", "系统设置", "检索调试"]
+PACK_STATE_KEYS = (
+    "workspace_page",
+    "session_id",
+    "answer_jobs",
+    "unsaved_turns",
+    "inspection",
+    "conversation_filter",
+    "editing_failed_turn",
+    "upload_errors",
+    "flash",
+    "settings_feedback",
+    "settings_feedback_request",
+    "settings_pending_rebuild",
+    "session_limit",
+    "pack_build_result",
+    "pack_lint_result",
+)
 
 
 def session_title(session: dict, jobs: dict, unsaved: dict) -> str:
@@ -43,6 +61,49 @@ def navigate(page: str) -> None:
 
 def clear_editing() -> None:
     st.session_state.pop("editing_failed_turn", None)
+
+
+def _pack_options(services: Services) -> tuple[list, dict]:
+    entries = PackCatalog(services.settings).list()
+    options = [None] + [entry.pack_id for entry in entries]
+    labels = {None: "部署默认工作区"}
+    for entry in entries:
+        status = {"draft": "草稿", "reviewed": "已审核", "frozen": "已冻结"}[entry.status]
+        if not entry.has_data:
+            status += " · 未建索引"
+        labels[entry.pack_id] = f"{entry.title}（{status}）"
+    return options, labels
+
+
+def _busy() -> bool:
+    collect_finished_jobs()
+    return bool(st.session_state.get("answer_jobs")) or bool(
+        st.session_state.get("unsaved_turns")
+    )
+
+
+def activate_pack(pack_id: str | None) -> None:
+    if _busy():
+        st.session_state["pending_pack_select"] = st.session_state.get("active_pack")
+        st.session_state["pack_switch_error"] = (
+            "有正在生成或未保存的回答，暂不能切换知识包。"
+        )
+        st.rerun()
+        return
+    for key in PACK_STATE_KEYS:
+        st.session_state.pop(key, None)
+    st.session_state["active_pack"] = pack_id
+    # Widget-backed state can only be changed before the widget is built next run.
+    st.session_state["pending_pack_select"] = pack_id
+    st.session_state["pending_page"] = "AI 聊天"
+    st.rerun()
+
+
+def switch_pack() -> None:
+    target = st.session_state.get("active_pack_select")
+    if target == st.session_state.get("active_pack"):
+        return
+    activate_pack(target)
 
 
 def new_conversation(services: Services) -> None:
@@ -110,6 +171,27 @@ def sidebar(services: Services) -> tuple[str, str]:
         st.session_state["session_id"] = sessions[0]["id"]
     with st.sidebar:
         st.html('<div class="workspace-brand">Rag<span>Workbench</span></div>')
+        options, labels = _pack_options(services)
+        if len(options) > 1:
+            current = st.session_state.get("active_pack")
+            if current not in options:
+                current = None
+                st.session_state["active_pack"] = None
+            if st.session_state.get("active_pack_select") not in options:
+                st.session_state["active_pack_select"] = current
+            busy = _busy()
+            st.selectbox(
+                "知识包",
+                options,
+                index=options.index(current),
+                format_func=labels.get,
+                key="active_pack_select",
+                on_change=switch_pack,
+                disabled=busy,
+                help="切换后使用该知识包独立的数据目录与配置。",
+            )
+            if busy:
+                st.caption("生成中，暂不能切换知识包。")
         st.button(
             "新建会话",
             icon=":material/add:",

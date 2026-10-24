@@ -1,7 +1,16 @@
 from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
+from pydantic import ValidationError
 
+from rag_workbench.application.packs import (
+    PackBuilder,
+    PackCatalog,
+    PackSpec,
+    load_pack_settings,
+    pack_lint,
+)
 from rag_workbench.bootstrap import (
     Services,
     environment_owned_keys,
@@ -9,7 +18,11 @@ from rag_workbench.bootstrap import (
     save_ui_settings,
 )
 from rag_workbench.domain.errors import AppError
+from rag_workbench.infrastructure.embedding import BgeEmbedder
+from rag_workbench.infrastructure.parsing import SUPPORTED_FORMATS_LABEL, UPLOAD_EXTENSIONS
 from rag_workbench.ui.components import inspection_panel
+from rag_workbench.ui.pack_studio import render_pack_studio
+from rag_workbench.ui.shell import activate_pack
 
 INDEX_LABELS = {
     "ready": "已就绪",
@@ -18,6 +31,16 @@ INDEX_LABELS = {
     "corrupt": "索引损坏",
 }
 DOCUMENT_LABELS = {"ready": "已就绪", "pending": "待处理", "failed": "导入失败"}
+PACK_STATUS_LABELS = {"draft": "草稿", "reviewed": "已审核", "frozen": "已冻结"}
+PROFILE_STATUS_LABELS = {"draft": "profile 草稿", "reviewed": "profile 已审核"}
+EVAL_STATUS_LABELS = {"none": "无评测集", "candidate": "评测题候选中", "frozen": "评测集已冻结"}
+LICENSE_LABELS = {
+    "unknown": "未知（默认仅本机）",
+    "internal_only": "内部资料（仅本机）",
+    "licensed": "已获授权",
+    "public_domain": "公版/公开",
+}
+LINT_STATUS_LABELS = {"pass": "通过", "warn": "警告", "fail": "失败"}
 
 
 def document_rows(documents):
@@ -108,12 +131,13 @@ def knowledge_page(services: Services) -> None:
     with st.container(border=True):
         st.subheader("添加文档")
         st.caption(
-            f"TXT / Markdown / PDF · 每个文件至多 {services.settings.max_upload_mb} MB · 不支持 OCR"
+            f"{SUPPORTED_FORMATS_LABEL} · 每个文件至多 "
+            f"{services.settings.max_upload_mb} MB · 不支持 OCR"
         )
         st.caption("隐私提示：用于证据判断与回答的片段可能发送至远程 LLM；原始文档保存在本机。")
         uploaded = st.file_uploader(
             "选择资料",
-            type=["txt", "md", "pdf"],
+            type=UPLOAD_EXTENSIONS,
             accept_multiple_files=True,
             key=f"upload_{st.session_state.get('upload_version', 0)}",
         )
@@ -191,6 +215,262 @@ def knowledge_page(services: Services) -> None:
                 st.rerun()
             except AppError as exc:
                 st.error(str(exc))
+
+
+def _lint_rows(lint: dict) -> list[dict]:
+    return [
+        {
+            "检查": check["id"],
+            "状态": LINT_STATUS_LABELS[check["status"]],
+            "说明": check["message"],
+        }
+        for check in lint["checks"]
+    ]
+
+
+def _show_lint(lint: dict) -> None:
+    rows = _lint_rows(lint)
+    st.dataframe(rows, hide_index=True, width="stretch")
+    failures = sum(row["状态"] == "失败" for row in rows)
+    warnings = sum(row["状态"] == "警告" for row in rows)
+    st.caption(f"体检结果：{failures} 项失败，{warnings} 项警告。")
+
+
+def _show_build_result(services: Services, result: dict) -> None:
+    st.divider()
+    st.subheader("构建结果")
+    st.success("知识包已发布为草稿（自动草稿，未验收）。")
+    cols = st.columns(4)
+    cols[0].metric("文档", result["stats"]["documents"])
+    cols[1].metric("文本块", result["stats"]["chunks"])
+    cols[2].metric("被拒绝文件", len(result["failures"]))
+    cols[3].metric("体检失败", sum(
+        check["status"] == "fail" for check in result["lint"]["checks"]
+    ))
+    st.caption(
+        f"知识包目录：{Path(result['pack_dir']).as_posix()} · "
+        f"数据目录：{Path(result['data_dir']).as_posix()}"
+    )
+    if result["failures"]:
+        with st.expander(f"被拒绝的文件（{len(result['failures'])}）"):
+            st.dataframe(
+                [
+                    {
+                        "文件": failure["name"],
+                        "错误码": failure["error_code"],
+                        "说明": failure["error"],
+                    }
+                    for failure in result["failures"]
+                ],
+                hide_index=True,
+                width="stretch",
+            )
+    with st.expander("查看体检明细"):
+        _show_lint(result["lint"])
+    smoke = result["smoke"]["metrics"]
+    rate = smoke["document_hit_rate"]
+    st.caption(
+        f"检索自检：{smoke['document_hits']}/{smoke['cases']} 个查询召回了目标文档"
+        + (f"（{rate:.0%}）" if rate is not None else "")
+        + "；这只是索引自洽检查，不是回答准确率验收。"
+    )
+    cols = st.columns(2)
+    if cols[0].button("切换到该知识包", type="primary", key="switch_built_pack"):
+        activate_pack(result["pack_id"])
+    if cols[1].button("关闭结果", key="clear_pack_result"):
+        st.session_state.pop("pack_build_result", None)
+        st.rerun()
+    st.caption("profile/profile.md 是保守模板；P1 不调用 LLM，也不声称已完成人工审核。")
+
+
+def packs_page(services: Services) -> None:
+    st.title("知识包")
+    st.caption("把资料整理成可追溯、可体检、可切换的草稿知识包。")
+    st.info(
+        "建库本身生成确定性草稿；P2 的 profile/评测题起草和在线评测必须先勾选费用确认，"
+        "LLM 产物只有人工审核后才生效，系统不会自动宣称验收通过。"
+    )
+    current = st.session_state.get("active_pack")
+    if current:
+        st.caption(f"当前工作区：知识包 `{current}`")
+    else:
+        st.caption("当前工作区：部署默认工作区")
+
+    with st.container(border=True):
+        st.subheader("新建知识包")
+        with st.form("pack_builder"):
+            col1, col2 = st.columns(2)
+            pack_id = col1.text_input(
+                "知识包 ID",
+                key="pack_id_input",
+                max_chars=40,
+                help="2–40 位小写字母、数字和连字符；创建后不可改名。",
+                placeholder="my-knowledge-pack",
+            )
+            title = col2.text_input(
+                "名称",
+                key="pack_title_input",
+                max_chars=120,
+                placeholder="例如：产品手册",
+            )
+            description = st.text_area(
+                "说明", key="pack_description_input", max_chars=1000, height=68
+            )
+            col1, col2 = st.columns(2)
+            intended_use = col1.text_input(
+                "预期用途", key="pack_use_input", max_chars=800
+            )
+            authority_scope = col2.text_input(
+                "权威范围", key="pack_scope_input", max_chars=800
+            )
+            col1, col2 = st.columns(2)
+            language = col1.text_input(
+                "语言", value="zh", key="pack_language_input", max_chars=20
+            )
+            license_status = col2.selectbox(
+                "资料授权",
+                list(LICENSE_LABELS),
+                format_func=LICENSE_LABELS.get,
+                key="pack_license_input",
+            )
+            st.caption("同一包内资料应使用相同授权口径；混合授权请分别建包。")
+            uploaded = st.file_uploader(
+                "资料文件",
+                type=UPLOAD_EXTENSIONS,
+                accept_multiple_files=True,
+                key="pack_uploader",
+                help=f"支持 {SUPPORTED_FORMATS_LABEL}；PDF 需文本层，不做 OCR。",
+            )
+            with st.expander("高级：分块与检索（默认继承当前工作区）"):
+                col1, col2 = st.columns(2)
+                chunk_size = col1.number_input(
+                    "Chunk Size（字符）", 20, 4000, services.settings.chunk_size
+                )
+                chunk_overlap = col2.number_input(
+                    "Chunk Overlap（字符）", 0, 2000, services.settings.chunk_overlap
+                )
+                col1, col2 = st.columns(2)
+                top_k = col1.number_input("Top-K", 1, 20, services.settings.top_k)
+                threshold = col2.number_input(
+                    "相关性阈值",
+                    -1.0,
+                    1.0,
+                    services.settings.similarity_threshold,
+                    step=0.01,
+                )
+            st.caption("构建期间页面会等待；大资料包需要几分钟。所有产物先写入暂存目录，成功后原子发布。")
+            submitted = st.form_submit_button("构建知识包", type="primary")
+        if submitted:
+            uploads = [(item.name, item.getvalue()) for item in (uploaded or [])]
+            if not uploads:
+                st.error("请先选择至少一个资料文件。")
+            else:
+                try:
+                    spec = PackSpec(
+                        pack_id=pack_id,
+                        title=title,
+                        description=description,
+                        intended_use=intended_use,
+                        authority_scope=authority_scope,
+                        language=language,
+                        license_status=license_status,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                        top_k=top_k,
+                        similarity_threshold=threshold,
+                    )
+                    with st.spinner("正在解析、分块、建立索引并生成合规草稿…"):
+                        result = PackBuilder(
+                            services.settings, services.knowledge.embedder
+                        ).build(spec, uploads)
+                    st.session_state["pack_build_result"] = result.model_dump(mode="json")
+                except ValidationError as exc:
+                    detail = exc.errors()[0].get("msg", str(exc))
+                    st.error(f"知识包参数无效：{detail}")
+                except AppError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    st.error(
+                        f"构建失败（{type(exc).__name__}）。请检查磁盘权限、模型缓存后重试。"
+                    )
+
+    result = st.session_state.get("pack_build_result")
+    if result:
+        _show_build_result(services, result)
+
+    st.divider()
+    st.subheader("已有知识包")
+    st.caption("这里只显示带 pack.json 的新知识包；旧版知识包继续使用原启动脚本。")
+    catalog = PackCatalog(services.settings)
+    entries = catalog.list()
+    for warning in catalog.warnings:
+        st.warning(warning)
+    if not entries:
+        st.caption("还没有可管理的知识包。构建成功后会在左侧出现知识包选择器。")
+        return
+    labels = {
+        entry.pack_id: (
+            f"{entry.title}（{PACK_STATUS_LABELS[entry.status]}"
+            + ("" if entry.has_data else " · 未建索引")
+            + "）"
+        )
+        for entry in entries
+    }
+    pack_ids = [entry.pack_id for entry in entries]
+    if st.session_state.get("pack_manage_select") not in pack_ids:
+        st.session_state.pop("pack_manage_select", None)
+    selected = st.selectbox(
+        "选择知识包",
+        pack_ids,
+        format_func=lambda value: labels[value],
+        key="pack_manage_select",
+    )
+    entry = catalog.get(selected)
+    st.caption(
+        f"目录：{entry.pack_dir.as_posix()} · 数据：{entry.data_dir.as_posix()} · "
+        f"授权：{LICENSE_LABELS[entry.license_status]} · 分发：{entry.distribution}"
+    )
+    st.caption(
+        f"{PROFILE_STATUS_LABELS[entry.profile_status]} · "
+        f"{EVAL_STATUS_LABELS[entry.eval_status]} · "
+        f"holdout：{'已使用' if entry.holdout_status == 'used' else '未使用'}"
+    )
+    pack_settings = None
+    try:
+        pack_settings = load_pack_settings(selected, base=services.settings)
+    except AppError as exc:
+        st.error(f"知识包配置无效：{exc}")
+    if st.session_state.get("active_pack") == selected:
+        st.info("这是当前工作区。")
+    cols = st.columns(2)
+    if cols[0].button("切换到该知识包", key="switch_existing_pack"):
+        activate_pack(selected)
+    if cols[1].button("运行体检", key="lint_existing_pack"):
+        if pack_settings is None:
+            st.error("知识包配置无效，无法体检。")
+        else:
+            try:
+                with st.spinner("正在检查清单、哈希与索引…"):
+                    lint = pack_lint(
+                        entry.pack_dir,
+                        entry.data_dir if entry.has_data else None,
+                        secret_values=[services.settings.api_key.get_secret_value()],
+                        embedder=BgeEmbedder(pack_settings),
+                    )
+                st.session_state["pack_lint_result"] = {
+                    "pack_id": selected,
+                    "lint": lint.model_dump(),
+                }
+            except AppError as exc:
+                st.error(str(exc))
+    stored = st.session_state.get("pack_lint_result")
+    if stored and stored["pack_id"] == selected:
+        _show_lint(stored["lint"])
+    if pack_settings is not None:
+        if entry.has_data:
+            render_pack_studio(services, entry, pack_settings)
+        else:
+            st.warning("该知识包还没有运行数据；先切换到它并在“知识库管理”重建索引，再审核和评测。")
 
 
 def settings_page(services: Services) -> None:

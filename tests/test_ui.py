@@ -17,7 +17,7 @@ def test_all_pages_render_with_empty_kb_and_no_key(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
-    for page in ("知识库管理", "系统设置", "检索调试", "AI 聊天"):
+    for page in ("知识库管理", "知识包", "系统设置", "检索调试", "AI 聊天"):
         app.sidebar.radio[0].set_value(page).run()
         assert not app.exception, page
     app.chat_input[0].set_value("请介绍一下你自己").run()
@@ -47,6 +47,51 @@ def test_chat_sources_and_new_session_work_with_backend_fakes(settings, monkeypa
     app.sidebar.button[0].click().run()
     assert not app.exception
     assert len(app.chat_message) == 0
+
+
+def test_pack_page_lists_and_activates_existing_pack(tmp_path, monkeypatch):
+    from rag_workbench.application.packs import PackBuilder, PackSpec
+    from rag_workbench.bootstrap import build_services
+    from rag_workbench.config import Settings
+    from rag_workbench.ui import app as ui_app
+
+    from .fakes import FakeEmbedder, FakeProvider
+
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "active",
+        packs_dir=tmp_path / "packs",
+        packs_data_dir=tmp_path / "data",
+        chunk_size=100,
+        chunk_overlap=10,
+    )
+    PackBuilder(settings, FakeEmbedder()).build(
+        PackSpec(
+            pack_id="demo-pack",
+            title="示例知识包",
+            license_status="internal_only",
+            chunk_size=100,
+            chunk_overlap=10,
+            similarity_threshold=0.0,
+        ),
+        [("a.txt", "资料正文。".encode())],
+    )
+    services = build_services(settings, embedder=FakeEmbedder(), provider=FakeProvider())
+    monkeypatch.setenv("RAG_PACKS_DIR", str(settings.packs_dir))
+    monkeypatch.setenv("RAG_PACKS_DATA_DIR", str(settings.packs_data_dir))
+    monkeypatch.setattr(ui_app, "load_settings", lambda: settings)
+    monkeypatch.setattr(ui_app, "resources", lambda *args: services)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio[0].set_value("知识包").run()
+    assert not app.exception
+    labels = [button.label for button in app.button]
+    assert "用 LLM 起草 profile" in labels
+    assert "用 LLM 起草评测题" in labels
+    assert "冻结评测集" not in labels
+    app.button(key="switch_existing_pack").click().run()
+    assert not app.exception
+    assert app.session_state["active_pack"] == "demo-pack"
+    assert app.session_state["workspace_page"] == "AI 聊天"
 
 
 def test_sidebar_search_filters_real_sessions(settings, monkeypatch):

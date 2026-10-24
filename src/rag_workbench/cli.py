@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import json
 import shutil
 import sys
@@ -7,6 +8,13 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from rag_workbench.application.evaluation import EvalCase, evaluate
+from rag_workbench.application.pack_evaluation import PackEvaluation
+from rag_workbench.application.packs import (
+    PackCatalog,
+    PackManifest,
+    load_pack_settings,
+    pack_lint,
+)
 from rag_workbench.bootstrap import build_services, load_settings
 from rag_workbench.config import Settings, load_file_settings
 from rag_workbench.domain.errors import AppError
@@ -17,6 +25,7 @@ def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="RAG Workbench local tools")
     parser.add_argument("--data-dir", type=Path, help="Override isolated workspace data directory")
     parser.add_argument("--settings-file", type=Path, help="Explicit non-secret JSON settings")
+    parser.add_argument("--pack", help="Use knowledge_packs/<PACK>/settings.json")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("stats", help="Show current KB health without loading a model")
     sub.add_parser("reset-settings", help="Reset saved UI overrides; preserves documents and chats")
@@ -49,6 +58,16 @@ def make_parser() -> argparse.ArgumentParser:
     evaluation.add_argument(
         "--with-routing", action="store_true", help="Calls remote, potentially paid API"
     )
+    sub.add_parser("pack-list", help="List knowledge packs with pack.json manifests")
+    lint = sub.add_parser("pack-lint", help="Check pack artifacts, hashes and index presence")
+    lint.add_argument("target", nargs="?", help="Pack ID or pack directory")
+    pack_eval = sub.add_parser(
+        "pack-eval", help="Run a frozen dev/holdout evaluation for --pack"
+    )
+    pack_eval.add_argument("--split", choices=["dev", "holdout"], required=True)
+    pack_eval.add_argument("--online", action="store_true", help="Calls remote, paid API")
+    pack_eval.add_argument("--confirm-cost", action="store_true")
+    pack_eval.add_argument("--confirm-holdout", action="store_true")
     return parser
 
 
@@ -95,12 +114,78 @@ def main() -> int:
     args = make_parser().parse_args()
 
     def deployment_settings() -> Settings:
+        if args.pack and args.settings_file:
+            raise AppError("invalid_arguments", "--pack 与 --settings-file 不能同时使用。")
+        if args.pack:
+            return load_pack_settings(args.pack, base=Settings(), data_dir=args.data_dir)
         if args.settings_file:
             return load_file_settings(args.settings_file, data_dir=args.data_dir)
         return Settings(data_dir=args.data_dir) if args.data_dir else Settings()
 
+    def lint_target() -> tuple[Path, Path | None]:
+        base = Settings()
+        target = args.target or args.pack
+        if not target:
+            raise AppError("missing_pack", "请提供知识包 ID 或知识包目录。")
+        candidate = Path(target)
+        if candidate.is_dir():
+            pack_dir = candidate.resolve()
+            pack_id = pack_dir.name
+            manifest_path = pack_dir / "pack.json"
+            if manifest_path.is_file():
+                with contextlib.suppress(ValueError):
+                    pack_id = PackManifest.model_validate_json(
+                        manifest_path.read_text(encoding="utf-8")
+                    ).pack_id
+            data_dir = args.data_dir or (
+                (base.packs_data_dir / pack_id).resolve()
+                if (base.packs_data_dir / pack_id).is_dir()
+                else None
+            )
+            return pack_dir, data_dir
+        summary = PackCatalog(base).get(target)
+        data_dir = args.data_dir or (summary.data_dir if summary.has_data else None)
+        return summary.pack_dir, data_dir
+
     try:
-        if args.command == "sample":
+        if args.command == "pack-list":
+            catalog = PackCatalog(Settings())
+            output = {
+                "packs": [
+                    summary.model_dump(mode="json") for summary in catalog.list()
+                ],
+                "warnings": catalog.warnings,
+            }
+        elif args.command == "pack-lint":
+            pack_dir, data_dir = lint_target()
+            lint = pack_lint(
+                pack_dir,
+                data_dir,
+                secret_values=[Settings().api_key.get_secret_value()],
+            )
+            output = lint.model_dump()
+            if lint.errors:
+                print(json.dumps(output, ensure_ascii=False, indent=2))
+                return 1
+        elif args.command == "pack-eval":
+            if not args.pack:
+                raise AppError("missing_pack", "pack-eval 需要 --pack <知识包 ID>。")
+            settings = deployment_settings()
+            services = build_services(load_settings(settings))
+            summary = PackCatalog(services.settings).get(args.pack)
+            run = PackEvaluation(
+                services.settings,
+                services.knowledge,
+                services.pipeline.provider,
+                summary.pack_dir,
+            ).run(
+                split=args.split,
+                online=args.online,
+                confirm_cost=args.confirm_cost,
+                confirm_holdout=args.confirm_holdout,
+            )
+            output = run.model_dump(mode="json")
+        elif args.command == "sample":
             output = sample_workspace(args.clear)
         elif args.command == "reset-settings":
             settings = deployment_settings()

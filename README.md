@@ -81,10 +81,11 @@ DEEPSEEK_API_KEY=your-real-key
 **远程证据判断和回答生成会发送检索到的文档片段及有限的必要对话。** 原始文件、索引与会话存本机。
 默认不记录提示词、文档正文或密钥日志。调试页也可能调用付费 API。
 
-## 四个工作页面
+## 五个工作页面
 
 - **AI 聊天**：持久化会话、新建/切换会话、生成状态、回答模式、折叠来源与检索详情。
-- **知识库管理**：上传 TXT、Markdown、普通 PDF；文件状态与统计、删除、重建索引。
+- **知识库管理**：上传 TXT、Markdown、普通 PDF、DOCX、EPUB、HTML；文件状态与统计、删除、重建索引。
+- **知识包**：构建带来源清单、生成映射、冻结设置和检索自检的草稿包；支持 LLM 起草 profile/评测题、人工审核、版本化冻结、离线/在线评测与失败诊断。可切换、运行体检。
 - **系统设置**：即时调整 LLM/Top-K/阈值/兜底，或修改模型与分块后明确要求重新索引。
 - **检索调试**：查看全部候选、相似度、阈值、证据充分性、问答路由和结构化结果；不生成答案。
 
@@ -93,9 +94,9 @@ DEEPSEEK_API_KEY=your-real-key
 
 ## 文档操作
 
-上传文件后点击“导入并建立索引”。支持 UTF-8、常见 GB18030 文本；PDF 需要已有文本层。
-单文件默认 20 MB，最多 300 页 PDF、提取文本最多 200 万字符。加密、损坏、空文档与无文本扫描 PDF
-会明确报错，不生成无效索引；不提供 OCR 或 DOCX。
+上传文件后点击“导入并建立索引”。支持 UTF-8/常见 GB18030 文本、Markdown、有文本层的 PDF、DOCX、
+EPUB 和 HTML；PDF 需要已有文本层。单文件默认 20 MB，最多 300 页 PDF、提取文本最多 200 万字符。
+加密、损坏、空文档与无文本扫描 PDF 会明确报错，不生成无效索引；不提供 OCR，也不支持旧式 `.doc`。
 
 同内容（SHA-256）不会重复入库；同名不同内容保留为不同文档。原件按安全 ID 保存。
 首次索引会下载真实 BGE 模型到 `.cache/models`，后续进程和页面刷新复用缓存。
@@ -110,6 +111,53 @@ CLI 可恢复保留的原件（用完整文档 ID）：
 
 失败上传留 `failed` 元数据和原件，排除故障后点“重新建立索引”。索引损坏或配置不兼容会阻止检索，
 并提示重建；不会偷偷改成通用问答。旧索引快照保留供恢复分析，旧聊天保留当时来源文本。
+
+## 知识包构建（P1 草稿）
+
+“知识包”页把一批资料整理成可追溯、可体检的草稿知识包。构建器会：
+
+1. 保留原件副本，登记 `source_manifest.csv`（来源、SHA-256、授权状态）；
+2. 生成 `corpus/` 正文与 `generated_manifest.jsonl`（精确路径、哈希、来源映射）；
+3. 写入冻结的 `settings.json`、`pack.json`（`status=draft`）、保守的 `profile/profile.md` 草案；
+4. 在独立数据目录建立索引，并做一次检索自检 `eval/smoke.json`；
+5. 写入 `review_notes.md`、`build_report.json` 和 `lint_report.*`。
+
+所有产物默认是“自动草稿，未验收”：`eval/smoke.json` 只检查索引自洽，不是准确率、
+事实正确性或独立留出验收；profile 需人工审核。授权未知/内部资料默认仅本机，不分发。
+EPUB/DOCX/HTML 按来源合并为一个整理正文，章节标题保留但不拆成独立文档；PDF 页码来自
+文本层解析。构建为同步执行，大资料包期间页面会等待。
+构建成功后可在左侧切换到该知识包；切换使用独立的数据目录和冻结配置。知识包目录与运行数据
+目录分离，复制包目录不会自动带上索引。
+
+### 审核与评测（P2）
+
+“知识包”页对选中的包提供三个标签：
+
+- **Profile**：可用 LLM 起草 profile 草案，或直接手工编辑。草案不会自动替换当前 profile；
+  采用/保存会写入历史、内容哈希和审核记录，并把 `profile_status` 标为 `reviewed`。
+- **评测集**：可用 LLM 起草带真实 chunk 锚点的候选题目，确定性检查锚点归属、离线可达性和
+  负例风险；人工编辑、批准/拒绝、分配 dev/holdout 后才能冻结。冻结会生成版本化
+  `eval/freezes/fNNN/`、运行时四键 labels、profile/settings/正文清单/labels 哈希和
+  `eval/current.json`。profile 未审核、正例不可达、负例被门槛放行、题目重复都会阻止冻结。
+- **评测报告**：可运行离线（不调用 LLM）或在线（逐题调用模型）评测；在线必须勾选费用确认。
+  holdout 运行会消耗一次性留出资格（在线全部服务错误时不消耗，可修复后重试）；冻结后
+  profile/settings/正文清单变化会让旧冻结失效，必须重新冻结。报告包含检索/路由/引用结构和
+  规则化失败诊断；答案事实正确性仍需人工逐条核对。
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_workbench.cli --pack my-pack pack-eval --split dev
+.\.venv\Scripts\python.exe -m rag_workbench.cli --pack my-pack pack-eval --split holdout --confirm-holdout
+.\.venv\Scripts\python.exe -m rag_workbench.cli --pack my-pack pack-eval --split holdout --online --confirm-cost --confirm-holdout
+```
+
+P2 不自动调参、不自动认证验收；`eval/smoke.json` 仍只是索引自检。在线评测和 LLM 起草都
+不会在未确认时调用远程 API。
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_workbench.cli pack-list
+.\.venv\Scripts\python.exe -m rag_workbench.cli pack-lint my-pack
+.\.venv\Scripts\python.exe -m rag_workbench.cli --pack my-pack stats
+```
 
 ## 检索、证据与回答模式
 
@@ -214,9 +262,9 @@ rag-workbench/
 ├── src/rag_workbench/
 │   ├── config.py / bootstrap.py / cli.py
 │   ├── domain/               # 输入输出模型、错误和端口
-│   ├── application/          # 知识库管理、RAG、评估、提示词
+│   ├── application/          # 知识库管理、知识包构建/审核/评测、RAG、提示词
 │   ├── infrastructure/       # SQLite、FAISS、BGE、LLM、解析与分块
-│   └── ui/                   # 四页、来源与调试组件
+│   └── ui/                   # 五页、来源与调试组件
 ├── tests/                    # 离线回归与可选真实模型测试
 ├── examples/                 # 独立虚构样例 TXT / MD / PDF
 ├── scripts/                  # 开发辅助工具
@@ -242,9 +290,11 @@ rag-workbench/
 
 ## 局限与下一步
 
-暂未提供 OCR、DOCX、向量增量更新、cross-encoder reranker、
+暂未提供 OCR、旧式 `.doc`、向量增量更新、cross-encoder reranker、
 多用户认证或分布式部署。已提供 BM25 混合检索（稠密+关键词 RRF）；
 PDF 复杂表格/多栏阅读顺序可能需要人工检查；分块优先换行/标点并满足实际 token 预算。
+知识包构建与审核支持 LLM 起草、人工审核、版本化冻结和在线评测，但不做自动调参或自动合规签字；
+LLM 生成内容只有人工采用后才生效，答案事实正确性仍需人工核对。
 历史按完整回合保留最近至多 12 条、最多 16000 字符；错误回合不进入模型，但界面仍保留记录。
 模型缓存最多两个配置；旧快照与回收原件不自动清理，长期使用需制定备份/保留策略。
 网络首次下载与模型推理可能有等待；重建期间同库读写串行，不适合大规模并发。
