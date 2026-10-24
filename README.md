@@ -2,7 +2,7 @@
 
 ## Windows 桌面便携版
 
-当前版本 0.1.9，见 [第九轮优化与发布记录](docs/REVIEW_ROUND9_2026-10-24.md)。本轮保留原数据、环境配置与旧发行包。历史记录：[0.1.8](docs/REVIEW_ROUND8_2026-10-24.md)、[0.1.7](docs/REVIEW_ROUND7_2026-10-24.md)、[0.1.6](docs/REVIEW_ROUND6_2026-10-24.md)、[0.1.5](docs/REVIEW_ROUND5_2026-10-24.md)、[0.1.4](docs/REVIEW_ROUND4_2026-10-24.md)、[0.1.3](docs/REVIEW_ROUND3_2026-10-24.md)、[0.1.2](docs/REVIEW_ROUND2_2026-10-24.md)、[0.1.1](docs/REVIEW_2026-10-24.md)。
+当前版本 0.1.9，Windows 便携版见 [Releases](https://github.com/wfz2006/rag-workbench/releases)。本轮记录见 [第九轮优化与发布记录](docs/REVIEW_ROUND9_2026-10-24.md)。本轮保留原数据、环境配置与旧发行包。历史记录：[0.1.8](docs/REVIEW_ROUND8_2026-10-24.md)、[0.1.7](docs/REVIEW_ROUND7_2026-10-24.md)、[0.1.6](docs/REVIEW_ROUND6_2026-10-24.md)、[0.1.5](docs/REVIEW_ROUND5_2026-10-24.md)、[0.1.4](docs/REVIEW_ROUND4_2026-10-24.md)、[0.1.3](docs/REVIEW_ROUND3_2026-10-24.md)、[0.1.2](docs/REVIEW_ROUND2_2026-10-24.md)、[0.1.1](docs/REVIEW_2026-10-24.md)。
 
 桌面版双击 RAG Workbench.exe 启动，无需终端或系统 Python；API Key 与资料保存在独立 user-data 中。
 安装、配置和可复现打包命令见 [桌面版说明](docs/DESKTOP.md)。
