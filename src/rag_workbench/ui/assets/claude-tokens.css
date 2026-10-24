@@ -1,0 +1,262 @@
+/* Adapted from Caho1/open-claude-ui, MIT, Copyright (c) 2026 Caho1. See licenses/open-claude-ui.MIT.txt. */
+:root {
+  /* 0. 桌面端光学缩放与基准变量 */
+  --cds-rem-scale: calc(16 / 17); /* 桌面端光学微调系数 ≈ 0.94117647 */
+  --brand: #c6613f;               /* 官方桌面端主品牌色 */
+  --cds-clay: #d97757;            /* 经典陶土橙（微标与呼吸灯回退） */
+  --cds-clay-hover: #cc5a36;      /* 陶土色悬停加深态 */
+  --cds-clay-light: #fbf3ef;      /* 陶土极浅背景色 */
+
+  /* 1. Anthropic 官方 35 阶高精灰度标尺 (Grayscale Ramp) */
+  --cds-gray-0: #fff;
+  --cds-gray-10: #fcfcfb;
+  --cds-gray-20: #f9f9f7;
+  --cds-gray-30: #f6f6f4;
+  --cds-gray-40: #f3f3f0;
+  --cds-gray-50: #f0efec;
+  --cds-gray-60: #edece8;
+  --cds-gray-70: #eae9e4;
+  --cds-gray-80: #e7e6e1;
+  --cds-gray-90: #e4e3dd;
+  --cds-gray-100: #e1e0d9;
+  --cds-gray-150: #d2d1c7;
+  --cds-gray-200: #c3c2b7;
+  --cds-gray-250: #b4b3a8;
+  --cds-gray-300: #a5a49a;
+  --cds-gray-350: #97958d;
+  --cds-gray-400: #898781;
+  --cds-gray-450: #7b7974;
+  --cds-gray-500: #6d6b67;
+  --cds-gray-550: #5f5e5a;
+  --cds-gray-600: #52514e;
+  --cds-gray-650: #454442;
+  --cds-gray-700: #383835;
+  --cds-gray-750: #2c2c2a;
+  --cds-gray-800: #20201f;
+  --cds-gray-810: #1e1e1d;
+  --cds-gray-820: #1c1c1b;
+  --cds-gray-830: #1a1a19;
+  --cds-gray-840: #181817;
+  --cds-gray-850: #151515;
+  --cds-gray-860: #131313;
+  --cds-gray-870: #111111;
+  --cds-gray-880: #0f0f0f;
+  --cds-gray-890: #0d0d0d;
+  --cds-gray-900: #0b0b0b;
+
+  /* 2. Anthropic 官方 35 阶橙色/陶土色标尺 (Orange/Clay Ramp) */
+  --cds-orange-0: #fff;
+  --cds-orange-10: #fefbfa;
+  --cds-orange-20: #fdf7f5;
+  --cds-orange-30: #fcf4f0;
+  --cds-orange-40: #faf0ec;
+  --cds-orange-50: #f9ece7;
+  --cds-orange-60: #f8e9e2;
+  --cds-orange-70: #f7e5dd;
+  --cds-orange-80: #f7e1d7;
+  --cds-orange-90: #f7dcd1;
+  --cds-orange-100: #f7d8cb;
+  --cds-orange-150: #f3c5b2;
+  --cds-orange-200: #f4ae94;
+  --cds-orange-250: #f09978;
+  --cds-orange-300: #ec835a;
+  --cds-orange-350: #eb6834;
+  --cds-orange-400: #d95926;
+  --cds-orange-450: #c25124;
+  --cds-orange-500: #ae461c;
+  --cds-orange-550: #993d19;
+  --cds-orange-600: #863311;
+  --cds-orange-650: #712b0f;
+  --cds-orange-700: #5d230b;
+  --cds-orange-750: #4b1b08;
+  --cds-orange-800: #371407;
+  --cds-orange-810: #341307;
+  --cds-orange-820: #301106;
+  --cds-orange-830: #2d1006;
+  --cds-orange-840: #290f06;
+  --cds-orange-850: #240e07;
+  --cds-orange-860: #1f0e08;
+  --cds-orange-870: #1a0e09;
+  --cds-orange-880: #150d0a;
+  --cds-orange-890: #100c0b;
+  --cds-orange-900: #0b0b0b;
+
+  /* 3. 真实表面色彩阶梯 (Surfaces - Light Mode) */
+  --cds-surface-0: var(--cds-gray-20); /* #f9f9f7 侧边栏/底层 Canvas 基底 */
+  --cds-surface-1: var(--cds-gray-10); /* #fcfcfb 页面主聊天画布背景 */
+  --cds-surface-2: var(--cds-gray-0);  /* #ffffff 消息卡片表面 */
+  --cds-surface-3: var(--cds-gray-0);  /* #ffffff 输入框容器/高层浮层 */
+  --cds-surface-popover: var(--cds-gray-0); /* #ffffff 悬浮 Popover 表面 */
+
+  /* 4. Alpha 透明度与边框色系 */
+  --cds-alpha-0: hsla(0, 0%, 8%, 0);
+  --cds-alpha-1: hsla(0, 0%, 8%, 0.05); /* Ghost hover, skeleton */
+  --cds-alpha-2: hsla(0, 0%, 8%, 0.10); /* Standard border */
+  --cds-alpha-3: hsla(0, 0%, 8%, 0.20); /* Border strong */
+  --cds-alpha-4: hsla(0, 0%, 8%, 0.35); /* Heavy divider */
+
+  --cds-border: var(--cds-alpha-2);
+  --cds-border-strong: var(--cds-alpha-3);
+  --cds-ring-hairline: 1px;
+
+  /* 5. 双环浮动气泡架构 (Dual-Ring Architecture - 浅色模式) */
+  --cds-ring-inner: 0px;
+  --cds-ring-outer: 1px;
+  --cds-ring-color: var(--cds-border);
+
+  /* 6. 阴影系统 (Elevation Shadows) */
+  --cds-shadow-color: rgba(0, 0, 0, 0.08);
+  --cds-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05), 0 2px 8px 0 var(--cds-shadow-color);
+  --cds-shadow-md: 0 2px 4px 0 rgba(0, 0, 0, 0.05), 0 6px 16px 0 var(--cds-shadow-color);
+  --cds-shadow-lg: 0 4px 8px 0 rgba(0, 0, 0, 0.06), 0 12px 28px -2px var(--cds-shadow-color);
+  --cds-shadow-popover: inset 0 0 0 var(--cds-ring-inner) var(--cds-ring-color), 
+                        0 0 0 var(--cds-ring-outer) var(--cds-ring-color), 
+                        0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+
+  --cds-panel-shadow: 0 0 0 1px var(--cds-border), var(--cds-shadow-sm);
+  --cds-panel-shadow-hover: 0 0 0 1px var(--cds-border-strong), 0 4px 16px -2px rgba(0, 0, 0, 0.09);
+
+  /* 7. 核心输入终端双环阴影 (Composer Shadow) */
+  --cds-shadow-composer: 0 4px 20px rgba(0, 0, 0, 0.035), inset 0 0 0 1px var(--cds-border);
+  --cds-shadow-composer-hover: 0 4px 24px rgba(0, 0, 0, 0.06), inset 0 0 0 1px var(--cds-border-strong);
+  --cds-shadow-composer-focus: 0 4px 24px rgba(0, 0, 0, 0.08), inset 0 0 0 1px var(--cds-border-strong), 0 0 0 1px var(--cds-border-strong);
+
+  /* 8. 三层焦点微光环与拖拽微光 */
+  --cds-focus-shadow: inset 0 0 0 1px var(--cds-surface-1), 0 0 0 1.5px var(--cds-clay), 0 0 6px 1px rgba(217, 119, 87, 0.25);
+  --cds-shadow-drop-glow: inset 0 0 24px -2px rgba(217, 119, 87, 0.20), inset 0 0 0 2px var(--cds-clay);
+
+  /* 9. 交互填充与文本色阶 */
+  --cds-fill-ghost-hover: var(--cds-alpha-1);
+  --cds-fill-ghost-selected: var(--cds-alpha-2);
+  --cds-fill-secondary: var(--cds-alpha-2);
+  --cds-fill-secondary-hover: rgba(21, 21, 21, 0.14);
+
+  --cds-text-primary: #151515;
+  --cds-text-secondary: #525252;
+  --cds-text-muted: #8a8a8a;
+  --cds-bg-tint-blue: #f0f4f8;
+  --cds-segmented-track: rgba(0, 0, 0, 0.06);
+  --cds-segmented-thumb: #ffffff;
+
+  /* 10. 精密圆角阶梯与自适应嵌套公式 */
+  --radius-xs: .125rem;  /* 2px */
+  --radius-sm: .25rem;   /* 4px */
+  --radius-md: .375rem;  /* 6px */
+  --radius-lg: .5rem;    /* 8px */
+  --cds-panel-radius: 10px;
+  --radius-xl: .75rem;   /* 12px */
+  --radius-2xl: 1rem;    /* 16px */
+  --radius-3xl: 1.5rem;  /* 24px */
+  --cds-radius-composer: 20px;
+  --df-radius-pill: 999px;
+  --radius: var(--cds-radius, 8px);
+  --radius-card: calc(var(--cds-radius, 8px) + calc(.25rem * var(--cds-rem-scale, 1)));
+
+  /* 会话气泡与版心计量核心令牌 (REA v6.5.0 取证自 frame-shell-chrome-CAw-tYzh.js) */
+  /* 中性档别名 (REA 取证自 .cds-root 作用域, Claude 2.42304.2)
+     用户气泡背景经 --cds-bg-user-message 间接依赖这两个别名；缺失会使
+     var() 链在解析期失效、气泡背景回退为透明。 */
+  --cds-bg-neutral: var(--cds-alpha-1);
+  --cds-bg-neutral-hover: var(--cds-alpha-2);
+
+  /* 强调填充别名链 (REA 取证: .cds-root 作用域, Claude 2.42304.2)
+     --cds-fill-accent → --cds-role-accent-fill → --cds-role-accent-450 → --cds-blue-450 */
+  --cds-blue-450: #2a78d6;
+  --cds-role-accent-450: var(--cds-blue-450);
+  --cds-role-accent-fill: var(--cds-role-accent-450);
+  --cds-fill-accent: var(--cds-role-accent-fill);
+  --cds-bg-user-message: var(--cds-bg-neutral);
+  --cds-bg-user-message-personal: var(--cds-bg-tint-blue);
+  --cds-text-user-message-personal: var(--cds-text-tint-blue, #193c5f);
+  --cds-message-bubble-radius: calc(var(--cds-radius, 8px) + calc(.25rem * var(--cds-rem-scale, 1)));
+  --cds-message-bubble-pad-x: var(--cds-pad-lg, 16px);
+  --cds-message-bubble-pad-y: var(--cds-pad-md, 12px);
+  --cds-message-bubble-measure: 85%;
+  --cds-message-bubble-stack-gap: 4px;
+  --cds-message-bubble-radius-meeting: 4px;
+  --cds-message-bubble-radius-head: var(--cds-message-bubble-radius);
+  --cds-message-bubble-radius-foot: var(--cds-message-bubble-radius);
+  --cds-message-bubble-join-gap: min(8px, var(--cds-message-bubble-pad-y));
+  --cds-assistant-message-text-inset: 4px;
+  --cds-assistant-message-text-stop: clamp(0px, (100% - 384px) * .175, 56px);
+
+  /* 纵向节奏与排版律动 (REA v6.5.0 取证自 shared-styles-Bl9zqrv-.css) */
+  --chat-gutter: 32px;
+  --chat-body: calc(.875rem * var(--cds-rem-scale, 1));
+  --chat-leading: 1.42857;
+  --chat-turn-gap: calc(var(--chat-body) * var(--chat-leading) * .75);
+  --chat-item-gap: calc(var(--chat-body) * var(--chat-leading) * .5);
+
+  /* 11. 滚动时间轴驱动遮罩 (Scroll Fade 28px) */
+  --cds-scroll-fade-size: 28px;
+  --cds-scroll-fade-top: 0px;
+  --cds-scroll-fade-bottom: 0px;
+  --cds-scroll-fade-left: 0px;
+  --cds-scroll-fade-right: 0px;
+  --cds-scroll-fade-strip-color: var(--cds-surface-1);
+
+  /* 12. 真实物理动效贝塞尔曲线全集 (REA v6.5.0 取证) */
+  --cds-ease-swift: cubic-bezier(.16, 1, .3, 1);       /* 幽灵按钮/高频微交互 */
+  --cds-ease-expand: cubic-bezier(.19, 1, .22, 1);     /* Grid 0fr->1fr 展开防抖 */
+  --cds-ease-enter: cubic-bezier(.22, 1, .36, 1);      /* 消息块入场消融 */
+  --cds-ease-out: cubic-bezier(.165, .84, .44, 1);     /* 标准平滑出场 */
+  --cds-ease-snap: cubic-bezier(.32, .72, 0, 1);       /* 磁吸快速对齐 */
+  --cds-ease-overshoot: cubic-bezier(.34, 1.3, .64, 1);/* 经典机械果冻过冲 (+30%) */
+  --cds-ease-pop: cubic-bezier(.34, 1.56, .64, 1);     /* 弹窗/重图标回弹 (+56%) */
+  --cds-ease-pulse: cubic-bezier(.4, 0, .2, 1);        /* 思考三点跳动呼吸脉冲 */
+  --cds-ease-rise: cubic-bezier(.3, .7, .4, 1);        /* 状态条平滑抬升 */
+  --cds-ease-fall: cubic-bezier(0, 0, .2, 1);          /* 状态条平滑下落 */
+
+  /* 12b. 时间尺度令牌 (REA 取证自 c6a992d55-sXiDGMFQ.css, Claude 2.42304.2)
+     缺失时下列 var() 引用会让整条 transition 声明被丢弃、计算值退化为 `all 0s`。
+     --cds-dur-slow 被 .cds-btn-squish、卡片按压与 clip-path 过渡共同依赖。 */
+  --cds-dur-fast: 60ms;   /* 瞬态响应：按压塌陷、Focus 环显现、Checkbox 勾选 */
+  --cds-dur-snap: .12s;   /* 瞬时吸附：分段控件滑块、Tab 切换 */
+  --cds-dur-base: .2s;    /* 标准组件过渡：菜单弹出、折叠展开、卡片入场 */
+  --cds-dur-sheet: .3s;   /* 大面板与抽屉：侧边栏、Artifact 面板滑入 */
+  --cds-dur-slow: .45s;   /* 环境转场与按压回弹：.cds-btn-squish 松手复位的弹簧时长 */
+  --cds-btn-spring: linear(0, .2459, .6526, .9468, 1.0764, 1.0915, 1.0585, 1.0219, .9993, .9914, .9921, .9957, .9988, 1.0004, 1); /* 15阶物理弹簧回弹 */
+
+  /* 13. 字体栈与 CJK 真实回退链 */
+  --font-cjk-sans-sc: "PingFang SC";
+  --font-cjk-sans-tc: "PingFang TC";
+  --font-cjk-sans-jp: "Hiragino Sans";
+  --font-cjk-sans-kr: "Apple SD Gothic Neo";
+  --font-cjk-sans-fallback: var(--font-cjk-sans-sc), var(--font-cjk-sans-tc), var(--font-cjk-sans-jp), var(--font-cjk-sans-kr);
+  --font-sans-fallbacks: system-ui, "Segoe UI", Roboto, Helvetica, Arial, var(--font-cjk-sans-fallback), sans-serif;
+  --font-anthropic-sans: "anthropic-sans", var(--font-sans-fallbacks);
+  --font-anthropic-serif: "anthropic-serif", ui-serif, Georgia, "Times New Roman", var(--font-cjk-sans-fallback), serif;
+  --font-anthropic-mono: "anthropic-mono", ui-monospace, monospace;
+
+  /* 14. 语义化组件别名映射 (Component Semantic Aliases) */
+  --cds-bg-surface: var(--cds-surface-2);
+  --cds-bg-surface-elevated: var(--cds-surface-3);
+  --cds-bg-primary: var(--cds-surface-0);
+  --cds-bg-secondary: var(--cds-surface-1);
+  --cds-bg-hover: var(--cds-fill-ghost-hover);
+  --cds-bg-selected: var(--cds-fill-ghost-selected);
+  --cds-border-subtle: var(--cds-alpha-2);
+  --cds-border-accent: var(--cds-clay);
+  --cds-fill-brand: var(--brand);
+  --cds-fill-brand-hover: var(--cds-clay-hover);
+  --cds-fill-brand-subtle: var(--cds-clay-light);
+  --cds-fill-danger: #ef4444;
+  --cds-text-accent: var(--cds-clay);
+
+  /* 15. 语义化向后兼容别名与跨宿主通用别名 (Backward-Compatibility & Host Aliases) */
+  --cds-bg-surface-0: var(--cds-surface-0);
+  --cds-bg-surface-1: var(--cds-surface-1);
+  --cds-bg-surface-2: var(--cds-surface-2);
+  --cds-bg-surface-3: var(--cds-surface-3);
+  --cds-bg-input: var(--cds-surface-3);
+  --cds-text-tertiary: var(--cds-text-muted);
+  --cds-border-card: var(--cds-border);
+  --cds-radius-pill: 9999px;
+  --cds-radius-card: var(--radius-card);
+  --cds-card-radius: var(--radius-card);
+  --cds-radius-message-bubble: var(--cds-message-bubble-radius);
+  --cds-radius-dialog: 16px;
+  --cds-radius-code: 12px;
+  --cds-radius-btn-md: 8px;
+  --cds-radius-btn-xs: 6px;
+}

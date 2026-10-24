@@ -1,0 +1,30 @@
+{"id": "test_01", "category": "concept", "question": "穿越雷区中坦克可以怎样移动，无路可走输出什么？", "relevant_source_ids": ["p_mine"], "expected_mode": "knowledge_base", "reference_facts": "上下左右到相邻区；正负交替；无解输出-1。"}
+{"id": "test_02", "category": "concept", "question": "机器人繁殖题给出的n和s的数据范围是什么？", "relevant_source_ids": ["p_robot"], "expected_mode": "knowledge_base", "reference_facts": "n不大于100；s不超过50位。"}
+{"id": "test_03", "category": "concept", "question": "饮料换购用几个瓶盖换一瓶，允许借瓶盖吗？", "relevant_source_ids": ["p_drink"], "expected_mode": "knowledge_base", "reference_facts": "3个瓶盖换一瓶，不允许暂借或赊账。"}
+{"id": "test_04", "category": "concept", "question": "最大公共子串题给出的两个示例字符串及结果是什么？", "relevant_source_ids": ["p_substring"], "expected_mode": "knowledge_base", "reference_facts": "abcdkkk和baabcdadabc；公共子串abcd，长度4。"}
+{"id": "test_05", "category": "concept", "question": "日期问题允许的完整日期范围与输出顺序是什么？", "relevant_source_ids": ["p_dates"], "expected_mode": "knowledge_base", "reference_facts": "1960-01-01至2059-12-31，去重后从早到晚。"}
+{"id": "test_06", "category": "concept", "question": "包子凑数中每种蒸笼能使用多少次，无限多个凑不出的数怎样输出？", "relevant_source_ids": ["p_buns"], "expected_mode": "knowledge_base", "reference_facts": "每种无限笼；输出INF。"}
+{"id": "test_07", "category": "concept", "question": "分巧克力对切出块的形状和大小有什么要求？", "relevant_source_ids": ["p_chocolate"], "expected_mode": "knowledge_base", "reference_facts": "整数边长正方形且大小相同，目标最大边长。"}
+{"id": "test_08", "category": "concept", "question": "递增三元组中三个下标和对应数值需要满足什么条件？", "relevant_source_ids": ["p_triples"], "expected_mode": "knowledge_base", "reference_facts": "1<=i,j,k<=N；Ai<Bj<Ck。"}
+{"id": "test_09", "category": "concept", "question": "日志统计的热帖判定时间窗口是闭区间吗？", "relevant_source_ids": ["p_logs"], "expected_mode": "knowledge_base", "reference_facts": "[T,T+D)，左闭右开，窗口内不少于K个赞。"}
+{"id": "test_10", "category": "concept", "question": "全球变暖怎样定义相邻陆地和被淹没的像素？", "relevant_source_ids": ["p_islands"], "expected_mode": "knowledge_base", "reference_facts": "上下左右连通；与海水上下左右相邻的陆地被淹。"}
+{"id": "test_11", "category": "code", "question": "stack使用示例把1到10压栈后，循环用哪两个接口访问并移除元素？", "relevant_source_ids": ["code_stlstack"], "expected_mode": "knowledge_base", "reference_facts": "st.top()读取、st.pop()移除；size判非空。"}
+{"id": "test_12", "category": "code", "question": "queue使用示例保存的pair两个分量是什么？如何读出？", "relevant_source_ids": ["code_stlqueue"], "expected_mode": "knowledge_base", "reference_facts": "{i,i*10}；front后取first和second，再pop。"}
+{"id": "test_13", "category": "code", "question": "冒泡排序代码中的flag为false时为何直接return？", "relevant_source_ids": ["code_bubble"], "expected_mode": "knowledge_base", "reference_facts": "本轮无相邻逆序交换，数组有序；源码提前结束。"}
+{"id": "test_14", "category": "code", "question": "选择排序代码用pos记录什么，何时交换？", "relevant_source_ids": ["code_select"], "expected_mode": "knowledge_base", "reference_facts": "待排区间最小元素下标，内层扫描后与i交换。"}
+{"id": "test_15", "category": "code", "question": "有效括号参考代码怎样处理右括号但栈已空的情况？", "relevant_source_ids": ["code_bracket"], "expected_mode": "knowledge_base", "reference_facts": "栈空时直接返回false；匹配后弹出左括号。"}
+{"id": "test_16", "category": "cross", "question": "对照01背包两问，至多装满与恰好装满在初始化上有什么区别？", "relevant_source_ids": ["knapsack_state@p044", "knapsack_state@p045"], "expected_mode": "knowledge_base", "reference_facts": "至多容量默认0；恰好装满不可达置负无穷，起点0。"}
+{"id": "test_17", "category": "cross", "question": "分别指出搜索课件的剪枝目的与二分答案课件的二段性要求。", "relevant_source_ids": ["dfs_prune", "binary_answer@p079"], "expected_mode": "knowledge_base", "reference_facts": "剪枝排除不必要分支；判定结果沿解空间呈二段性。"}
+{"id": "test_18", "category": "cross", "question": "快速排序课件与插入排序源码分别如何确定局部有序部分？", "relevant_source_ids": ["quick_sort@p009", "code_insert"], "expected_mode": "knowledge_base", "reference_facts": "快排按基准划分；插入排序维护已排序前缀。"}
+{"id": "test_19", "category": "cross", "question": "分别解释顺序表的物理存储特点以及queue接口是否删除front元素。", "relevant_source_ids": ["seq_concept@p002", "queue_stl"], "expected_mode": "knowledge_base", "reference_facts": "顺序表连续存储；front不删除。"}
+{"id": "test_20", "category": "cross", "question": "对照下楼梯与斐波那契课件，说明递推先确定状态再初始化的作用。", "relevant_source_ids": ["dp_stairs@p005", "dp_intro@p002"], "expected_mode": "knowledge_base", "reference_facts": "保存子问题结果；初值使后续转移有起点，按依赖顺序计算。"}
+{"id": "test_21", "category": "related_negative", "question": "第九届蓝桥杯C语言B组的官方获奖分数线是多少？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "只有题面，无获奖分数线。"}
+{"id": "test_22", "category": "related_negative", "question": "请列出本校这门数据结构课程的期末考试时间和地点。", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有本校考务。"}
+{"id": "test_23", "category": "related_negative", "question": "这份全球变暖题官方隐藏测试第7组的完整输入是什么？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有隐藏测评数据。"}
+{"id": "test_24", "category": "related_negative", "question": "我在分巧克力这题的线上提交编号和得分是什么？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有个人提交记录。"}
+{"id": "test_25", "category": "related_negative", "question": "当前资料中KMP失配数组的完整课程代码是什么？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "首批没有字符串算法专题。"}
+{"id": "test_26", "category": "unrelated", "question": "我今天的体检血糖值是多少？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无体检记录。"}
+{"id": "test_27", "category": "unrelated", "question": "明天飞往东京的航班实时票价是多少？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无机票信息。"}
+{"id": "test_28", "category": "unrelated", "question": "我家路由器管理员密码是什么？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无设备口令。"}
+{"id": "test_29", "category": "unrelated", "question": "公司下个月给我的工资具体多少？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无薪资信息。"}
+{"id": "test_30", "category": "unrelated", "question": "今天图书馆还剩多少个空座？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无实时座位数据。"}

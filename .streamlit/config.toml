@@ -1,0 +1,43 @@
+[server]
+address = "127.0.0.1"
+headless = true
+# Avoid traversing Transformers' lazy optional modules after the model loads.
+# Restart the app after Python edits; UI reruns and fragments remain available.
+fileWatcherType = "none"
+maxUploadSize = 20
+enableXsrfProtection = true
+enableCORS = true
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+# Let Python's normal GC run; avoid a full collection on every 200ms fragment tick.
+postScriptGC = false
+
+[theme]
+primaryColor = "#C6613F"
+font = "sans serif"
+
+[theme.light]
+primaryColor = "#C6613F"
+backgroundColor = "#FAF9F6"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#20201F"
+
+[theme.light.sidebar]
+backgroundColor = "#F0EFEB"
+secondaryBackgroundColor = "#E7E6E0"
+textColor = "#383835"
+
+[theme.dark]
+primaryColor = "#D97757"
+backgroundColor = "#141414"
+secondaryBackgroundColor = "#212121"
+textColor = "#E7E6E1"
+
+[theme.dark.sidebar]
+backgroundColor = "#111111"
+secondaryBackgroundColor = "#212121"
+textColor = "#D2D1C7"
+

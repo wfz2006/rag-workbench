@@ -1,0 +1,30 @@
+{"id": "holdout_01", "category": "concept", "question": "课程怎样区分静态顺序表和动态顺序表的分配方式？", "relevant_source_ids": ["seq_concept@p002"], "expected_mode": "knowledge_base", "reference_facts": "静态分配申请连续区域；动态分配按需申请，使用动态数组。"}
+{"id": "holdout_02", "category": "concept", "question": "数组栈的empty函数用什么条件判断栈空？", "relevant_source_ids": ["stack_ops@p005"], "expected_mode": "knowledge_base", "reference_facts": "n==0。"}
+{"id": "holdout_03", "category": "concept", "question": "数组队列如何从h和t求当前有效元素个数？", "relevant_source_ids": ["queue_ops@p005"], "expected_mode": "knowledge_base", "reference_facts": "t-h。"}
+{"id": "holdout_04", "category": "concept", "question": "快排课件指出总选最左元素时，已经有序的数组会发生什么？", "relevant_source_ids": ["quick_sort@p010"], "expected_mode": "knowledge_base", "reference_facts": "区间划分不均，递归层数n，时间退化成平方级。"}
+{"id": "holdout_05", "category": "concept", "question": "归并课件中两个指针cur1、cur2最初指向哪里？", "relevant_source_ids": ["merge_sort@p013"], "expected_mode": "knowledge_base", "reference_facts": "cur1=left，cur2=mid+1。"}
+{"id": "holdout_06", "category": "concept", "question": "二分课件给出了哪种避免l+r直接求和的mid表达式？", "relevant_source_ids": ["binary_bounds@p071"], "expected_mode": "knowledge_base", "reference_facts": "mid=l+(r-l)/2。"}
+{"id": "holdout_07", "category": "concept", "question": "剪枝章节如何描述可行性剪枝对非法分支的处理？", "relevant_source_ids": ["dfs_prune"], "expected_mode": "knowledge_base", "reference_facts": "当前分支已经不合法时停止向后搜索。"}
+{"id": "holdout_08", "category": "concept", "question": "下楼梯题允许一次走几级台阶？", "relevant_source_ids": ["dp_stairs@p004"], "expected_mode": "knowledge_base", "reference_facts": "1级、2级或3级。"}
+{"id": "holdout_09", "category": "concept", "question": "01背包恰好装满的问题为什么把不可达状态设为负无穷？", "relevant_source_ids": ["knapsack_state@p045"], "expected_mode": "knowledge_base", "reference_facts": "避免不可达状态参与取最大值，起始dp[0][0]=0。"}
+{"id": "holdout_10", "category": "concept", "question": "机器人繁殖题中n为97的样例，要求输出的初始机器人数量是多少？", "relevant_source_ids": ["p_robot"], "expected_mode": "knowledge_base", "reference_facts": "8。"}
+{"id": "holdout_11", "category": "code", "question": "数组栈参考源码会在pop内先检查empty吗？请按实际代码说明。", "relevant_source_ids": ["code_stack"], "expected_mode": "knowledge_base", "reference_facts": "不会；pop直接n--。"}
+{"id": "holdout_12", "category": "code", "question": "数组队列源码中的back和empty分别返回什么？", "relevant_source_ids": ["code_queue"], "expected_mode": "knowledge_base", "reference_facts": "q[t]；h==t。"}
+{"id": "holdout_13", "category": "code", "question": "有效括号代码在全部字符处理完后用什么判断整体合法？", "relevant_source_ids": ["code_bracket"], "expected_mode": "knowledge_base", "reference_facts": "返回st.empty()，防止多余左括号。"}
+{"id": "holdout_14", "category": "code", "question": "快速排序源码中的get_random从哪个闭区间选取下标？", "relevant_source_ids": ["code_quick"], "expected_mode": "knowledge_base", "reference_facts": "rand()%(right-left+1)+left，区间[left,right]。"}
+{"id": "holdout_15", "category": "code", "question": "插入排序代码为什么在移动元素前用key保存a[i]？", "relevant_source_ids": ["code_insert"], "expected_mode": "knowledge_base", "reference_facts": "右移会覆盖a[i]，用key保留待插元素。"}
+{"id": "holdout_16", "category": "cross", "question": "分别给出分巧克力和递增三元组中N的最大允许值。", "relevant_source_ids": ["p_chocolate", "p_triples"], "expected_mode": "knowledge_base", "reference_facts": "两者N都不超过100000。"}
+{"id": "holdout_17", "category": "cross", "question": "对比饮料换购与包子凑数：前者瓶盖可否暂借，后者蒸笼是否限次数？", "relevant_source_ids": ["p_drink", "p_buns"], "expected_mode": "knowledge_base", "reference_facts": "瓶盖不可暂借或赊账；每种蒸笼无限笼。"}
+{"id": "holdout_18", "category": "cross", "question": "分别指出穿越雷区与全球变暖题面中上下左右四邻的用途。", "relevant_source_ids": ["p_mine", "p_islands"], "expected_mode": "knowledge_base", "reference_facts": "坦克只能沿四邻移动；四邻定义陆地连通及临海像素淹没。"}
+{"id": "holdout_19", "category": "cross", "question": "日志统计与日期问题分别要求按什么顺序输出结果？", "relevant_source_ids": ["p_logs", "p_dates"], "expected_mode": "knowledge_base", "reference_facts": "热帖id从小到大；合法日期去重后从早到晚。"}
+{"id": "holdout_20", "category": "cross", "question": "课程中数组栈和数组队列的判空条件分别是什么？", "relevant_source_ids": ["stack_ops@p005", "queue_ops@p005"], "expected_mode": "knowledge_base", "reference_facts": "n==0；h==t。"}
+{"id": "holdout_21", "category": "related_negative", "question": "我的蓝桥杯报名账号绑定了哪个手机号码？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "未提供用户账号。"}
+{"id": "holdout_22", "category": "related_negative", "question": "请给出本校数据结构实验报告的提交截止时间。", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有本校教学日程。"}
+{"id": "holdout_23", "category": "related_negative", "question": "分巧克力题官方判题机使用哪一型号CPU？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有判题机硬件规格。"}
+{"id": "holdout_24", "category": "related_negative", "question": "我上次提交日志统计时在哪个测试点超时？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有用户提交日志。"}
+{"id": "holdout_25", "category": "related_negative", "question": "原课程老师对下周考试划定了哪些重点题？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有考前通知。"}
+{"id": "holdout_26", "category": "unrelated", "question": "我名下银行账户的开户行是哪一家？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无用户银行资料。"}
+{"id": "holdout_27", "category": "unrelated", "question": "我昨天午饭实际消费了多少钱？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无个人消费记录。"}
+{"id": "holdout_28", "category": "unrelated", "question": "宿舍物业今晚几点停水？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无物业通知。"}
+{"id": "holdout_29", "category": "unrelated", "question": "我预约的牙科门诊医生姓名是什么？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无预约记录。"}
+{"id": "holdout_30", "category": "unrelated", "question": "我的汽车现在停在停车场哪个车位？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无停车位置记录。"}

@@ -1,0 +1,3 @@
+{"id": "sample-retention", "question": "样例记录的保管期限是多少年？", "relevant_document_ids": ["bef8f16589d0cd0e1db69e65730c62a054ed32dc517118c18849fe92a80852c5"], "expected_mode": "knowledge_base"}
+{"id": "sample-interface", "question": "示例工作台支持哪些主题？", "relevant_document_ids": ["bc51c07bf448ab72bf4277ca6383bf1deba896709c6389dd71a387950eea5bb2"], "expected_mode": "knowledge_base"}
+{"id": "sample-unknown", "question": "资料负责人明天什么时候上班？", "relevant_document_ids": [], "expected_mode": "general"}

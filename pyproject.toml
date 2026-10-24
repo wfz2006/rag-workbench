@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rag-workbench"
+version = "0.1.9"
+description = "A local, domain-independent RAG knowledge workspace"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "streamlit>=1.66,<2", "openai>=3.36,<4", "pydantic>=2.14,<3",
+  "pydantic-settings>=2.10,<3", "numpy>=2.2,<3", "faiss-cpu>=1.12,<2",
+  "sentence-transformers>=6.2,<7", "pypdf>=6.21,<7", "filelock>=4.2,<5",
+  "python-dotenv>=1.2,<2",
+  "markdown-it-py>=4.2,<5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9,<10", "ruff>=0.17,<1", "reportlab>=5.1,<6"]
+desktop = ["pywebview>=6,<7; sys_platform == 'win32'"]
+
+[project.scripts]
+rag-workbench = "rag_workbench.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rag_workbench"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"licenses/open-claude-ui.MIT.txt" = "rag_workbench/ui/assets/open-claude-ui.MIT.txt"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["integration: real embedding model, explicitly enabled by environment"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["artifacts", "data", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+

@@ -1,0 +1,31 @@
+.venv/
+.env
+.env.*
+!.env.example
+data/
+.cache/
+artifacts/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+htmlcov/
+*.log
+.DS_Store
+Thumbs.db
+*.egg-info/
+dist/
+.coverage
+.superpowers/
+knowledge_packs/lanqiao_ds/corpus/
+knowledge_packs/lanqiao_ds/source_manifest.csv
+
+# Copyright-restricted local sample packs; not published.
+knowledge_packs/hongloumeng/
+knowledge_packs/santi/
+
+# Contains verbatim excerpts from the local-only Hongloumeng pack.
+docs/superpowers/plans/2026-10-24-hongloumeng-v6-quote-directness.md
+

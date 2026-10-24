@@ -1,0 +1,30 @@
+{"id": "dev_01", "category": "concept", "question": "课程如何定义线性表和顺序表？", "relevant_source_ids": ["seq_concept@p001", "seq_concept@p002"], "expected_mode": "knowledge_base", "reference_facts": "同特性数据有序序列；顺序表在物理上连续存储。"}
+{"id": "dev_02", "category": "concept", "question": "顺序表按位查找使用什么表达式，位置合法性要注意什么？", "relevant_source_ids": ["seq_lookup"], "expected_mode": "knowledge_base", "reference_facts": "a[p]；检查位置范围，原文提示p的位置应当合法。"}
+{"id": "dev_03", "category": "concept", "question": "什么叫栈顶和栈底？插入删除限制在哪里？", "relevant_source_ids": ["stack_concept"], "expected_mode": "knowledge_base", "reference_facts": "在一端插入删除；操作端栈顶，另一端栈底。"}
+{"id": "dev_04", "category": "concept", "question": "队头和队尾分别允许什么操作？", "relevant_source_ids": ["queue_concept"], "expected_mode": "knowledge_base", "reference_facts": "队尾插入，队头删除。"}
+{"id": "dev_05", "category": "concept", "question": "stack的size、empty、push、pop和top分别做什么？", "relevant_source_ids": ["stack_stl"], "expected_mode": "knowledge_base", "reference_facts": "元素个数、判空、入栈、出栈、访问栈顶；不能任意位置访问。"}
+{"id": "dev_06", "category": "concept", "question": "queue的front和back会删除元素吗？", "relevant_source_ids": ["queue_stl"], "expected_mode": "knowledge_base", "reference_facts": "只返回队头/队尾，不会删除。"}
+{"id": "dev_07", "category": "concept", "question": "课件为什么建议学排序，而不只是调用sort？", "relevant_source_ids": ["sort_intro"], "expected_mode": "knowledge_base", "reference_facts": "学习排序思想和基本算法，有助于后续算法学习。"}
+{"id": "dev_08", "category": "concept", "question": "二分每次缩小多少查找范围，课件给出的复杂度是什么？", "relevant_source_ids": ["binary_bounds@p071"], "expected_mode": "knowledge_base", "reference_facts": "去掉一半区域；logN。"}
+{"id": "dev_09", "category": "concept", "question": "搜索分为哪两种基本方式？", "relevant_source_ids": ["dfs_intro@p001"], "expected_mode": "knowledge_base", "reference_facts": "深度优先搜索DFS和宽度优先搜索BFS。"}
+{"id": "dev_10", "category": "concept", "question": "动态规划的状态、转移和初始化分别对应递归的哪一部分？", "relevant_source_ids": ["dp_intro@p003"], "expected_mode": "knowledge_base", "reference_facts": "递归函数意义、主函数体、递归出口。"}
+{"id": "dev_11", "category": "code", "question": "栈模拟实现的push和pop怎样修改元素计数n？", "relevant_source_ids": ["code_stack"], "expected_mode": "knowledge_base", "reference_facts": "stk[++n]=x；pop执行n--，未处理空栈。"}
+{"id": "dev_12", "category": "code", "question": "队列模拟实现为何用q[h+1]取得队头？", "relevant_source_ids": ["code_queue"], "expected_mode": "knowledge_base", "reference_facts": "h指向队头之前的位置；出队h++。"}
+{"id": "dev_13", "category": "code", "question": "插入排序参考代码中key和j分别起什么作用？", "relevant_source_ids": ["code_insert"], "expected_mode": "knowledge_base", "reference_facts": "key保存待插元素；j向左扫描比key大的元素并右移。"}
+{"id": "dev_14", "category": "code", "question": "归并排序参考代码怎样处理两段有序区间的剩余元素？", "relevant_source_ids": ["code_merge"], "expected_mode": "knowledge_base", "reference_facts": "两个指针合并，之后分别复制剩余段。"}
+{"id": "dev_15", "category": "code", "question": "快速排序参考源码怎样处理等于基准值的元素？", "relevant_source_ids": ["code_quick"], "expected_mode": "knowledge_base", "reference_facts": "根据源码三路划分，等于基准的元素所在区间无需递归排序。"}
+{"id": "dev_16", "category": "cross", "question": "对照课程，栈和队列的插入删除位置有什么不同？", "relevant_source_ids": ["stack_concept", "queue_concept"], "expected_mode": "knowledge_base", "reference_facts": "栈同一端；队列队尾入队队头出队。"}
+{"id": "dev_17", "category": "cross", "question": "分别说明二分查找复杂度和归并排序的分治思想。", "relevant_source_ids": ["binary_bounds@p071", "merge_sort@p012"], "expected_mode": "knowledge_base", "reference_facts": "二分每次去一半，logN；归并分成两段分别排序后合并。"}
+{"id": "dev_18", "category": "cross", "question": "把动态规划三要素与下楼梯的状态含义对应起来。", "relevant_source_ids": ["dp_intro@p003", "dp_stairs@p005"], "expected_mode": "knowledge_base", "reference_facts": "状态是到达第i阶方案数；按最后一步分1/2/3阶；需初始化和填表顺序。"}
+{"id": "dev_19", "category": "cross", "question": "结合数组栈源码与栈概念，top返回的是哪个位置？", "relevant_source_ids": ["code_stack", "stack_concept"], "expected_mode": "knowledge_base", "reference_facts": "stk[n]，栈顶，插入删除同一端。"}
+{"id": "dev_20", "category": "cross", "question": "结合BFS课件与队列概念，解释等权最短路逐层扩展的顺序。", "relevant_source_ids": ["bfs_intro", "queue_concept"], "expected_mode": "knowledge_base", "reference_facts": "权值为1逐层扩展，先进先出队列与此顺序对应。"}
+{"id": "dev_21", "category": "related_negative", "question": "课程老师本学期给动态规划安排了几课时？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有教学日程。"}
+{"id": "dev_22", "category": "related_negative", "question": "请给出这份课件作者的私人电话号码。", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "未提供私人联系信息。"}
+{"id": "dev_23", "category": "related_negative", "question": "2026年蓝桥杯报名费是多少？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "历史题库不包含2026报名信息。"}
+{"id": "dev_24", "category": "related_negative", "question": "我的蓝桥杯考点和准考证号是什么？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "没有用户报名记录。"}
+{"id": "dev_25", "category": "related_negative", "question": "根据当前知识库，给出红黑树删除调整的完整课程流程。", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "首批未选红黑树章节。"}
+{"id": "dev_26", "category": "unrelated", "question": "学校明天食堂午餐菜单是什么？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "库无菜单。"}
+{"id": "dev_27", "category": "unrelated", "question": "帮我查银行卡实时余额。", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "库无账户信息。"}
+{"id": "dev_28", "category": "unrelated", "question": "我的快递今天送到哪个驿站？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "库无物流信息。"}
+{"id": "dev_29", "category": "unrelated", "question": "请说出我宿舍门锁密码。", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "库无门锁信息。"}
+{"id": "dev_30", "category": "unrelated", "question": "现在新加坡的实时降雨量是多少？", "relevant_source_ids": [], "expected_mode": "insufficient_evidence", "reference_facts": "无实时天气。"}
