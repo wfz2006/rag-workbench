@@ -1,0 +1,26 @@
+{
+  "author_labels": "author_labels.jsonl",
+  "author_labels_sha256": "d46a033e00056f2f126201b1503ea58771a92cdfc1c27ddeaeaffe9a71308872",
+  "generated_manifest_sha256": "01fe155dc59311f9ba94f679138ed68ddeb4968ea19ff66965ec18cc0f42c9d9",
+  "splits": {
+    "dev": {
+      "path": "labels.dev.jsonl",
+      "cases": 14,
+      "sha256": "4b155eb7367cf575934bc10596a2cdf509ad714c94bcf959b55441b480dd78a8"
+    },
+    "holdout": {
+      "path": "labels.holdout.jsonl",
+      "cases": 12,
+      "sha256": "122866b70429aff03aeee22f04525a4ef7655932ee78d7c9471b6b0ad80cb881"
+    }
+  },
+  "categories": {
+    "relationship": 11,
+    "identity": 3,
+    "near_topic_negative": 2,
+    "unrelated": 6,
+    "reasoning": 1,
+    "direct_fact": 3
+  },
+  "frozen_at": "2026-10-23T19:57:58.405631+00:00"
+}

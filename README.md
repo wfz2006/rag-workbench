@@ -16,8 +16,9 @@
 运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\start-lanqiao.ps1`，
 默认打开本机端口8502，使用专用数据目录和显式教学配置。
 
-另有《红楼梦》与《三体全集》两个本地样例知识包，因版权限制仅保留在本机，不包含在本仓库中。
-本机已有对应资料与知识包时，可分别运行 `.\start-hongloumeng.ps1`（端口 8505）和
+《红楼梦》知识包已收录在 `knowledge_packs/hongloumeng/`（公版正文、章节清单与评测元数据；不含校注、来源清单和索引）。
+《三体全集》样例因版权限制仅保留在本机，不包含在本仓库中。
+本机已有对应知识包时，可分别运行 `.\start-hongloumeng.ps1`（端口 8505）和
 `.\start-santi.ps1`（端口 8503）。
 
 给其他 agent 建库时可参考[知识库开发标准与指南](docs/KNOWLEDGE_BASE_DEVELOPMENT_GUIDE.md)，

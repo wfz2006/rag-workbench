@@ -22,10 +22,12 @@ dist/
 knowledge_packs/lanqiao_ds/corpus/
 knowledge_packs/lanqiao_ds/source_manifest.csv
 
-# Copyright-restricted local sample packs; not published.
-knowledge_packs/hongloumeng/
+# Hongloumeng text is public domain; source manifest and generated index stay local.
+knowledge_packs/hongloumeng/source_manifest.csv
+
+# Copyright-restricted local sample pack; not published.
 knowledge_packs/santi/
 
-# Contains verbatim excerpts from the local-only Hongloumeng pack.
+# Internal implementation plan, not part of the public documentation.
 docs/superpowers/plans/2026-10-24-hongloumeng-v6-quote-directness.md
 

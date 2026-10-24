@@ -1,0 +1,14 @@
+{"id":"h01","question":"贾宝玉出生时嘴里含着什么？","relevant_document_ids":["dcf9eb9a75491ce2a60a76bc77887af1b94f525ca2f5af0feca8c454532c2f62"],"expected_mode":"knowledge_base"}
+{"id":"h02","question":"林黛玉的前身是什么？","relevant_document_ids":["618df3f5a793bd2efe2da9dc19580c571f2113147a6bd9ab7221a26f2d230511"],"expected_mode":"knowledge_base"}
+{"id":"h03","question":"贾宝玉的通灵玉上刻的八个字是什么？","relevant_document_ids":["3f442b13b579399b410a32753dcb8b3ec9a050acd1f7b356643fb72d354fb205"],"expected_mode":"knowledge_base"}
+{"id":"h04","question":"薛宝钗的哥哥是谁？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"h05","question":"刘姥姥给王熙凤的女儿取了什么名字？","relevant_document_ids":["80af1dcafd8c8468025c880fcdf9388ce784df2cebad965fcb24891b7835f0ef"],"expected_mode":"knowledge_base"}
+{"id":"h06","question":"贾元春和贾宝玉是什么关系？","relevant_document_ids":["54f07164340d1a5dcfe0062d24dcac458c2543d0cfe126c2f1a6165dd1c11af5"],"expected_mode":"knowledge_base"}
+{"id":"h07","question":"史湘云醉卧在哪里？","relevant_document_ids":["4780043fe9bc2c0a2fe0c4de8bfacdb01441fa5f8deaa5989c5adbd225e9c60e"],"expected_mode":"knowledge_base"}
+{"id":"h08","question":"探春发起成立的诗社叫什么？","relevant_document_ids":["781544e221be6b6a99aaf269beba791b8171a8e849307c0f562a7c86e4dcc199"],"expected_mode":"knowledge_base"}
+{"id":"h09","question":"林黛玉初进贾府时，贾母把哪个丫鬟给了她？","relevant_document_ids":["dcf9eb9a75491ce2a60a76bc77887af1b94f525ca2f5af0feca8c454532c2f62"],"expected_mode":"knowledge_base"}
+{"id":"h10","question":"袭人原名是什么？","relevant_document_ids":["dcf9eb9a75491ce2a60a76bc77887af1b94f525ca2f5af0feca8c454532c2f62"],"expected_mode":"knowledge_base"}
+{"id":"hn01","question":"林黛玉的手机号码是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"hn02","question":"贾宝玉的银行卡密码是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"hn03","question":"王熙凤的身份证号码是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"hn04","question":"如何用 JavaScript 实现深拷贝？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

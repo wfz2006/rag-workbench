@@ -1,0 +1,12 @@
+{"id":"v3h01","question":"贾琏的父亲是谁？","relevant_document_ids":["b7730d1412bb76144689903b2288e818264b2e43166a5ac381ab3a6908f46e39"],"expected_mode":"knowledge_base"}
+{"id":"v3h02","question":"贾琏偷娶的是谁？","relevant_document_ids":["9216b5286fd226bb25e1df722fe2382a0185058da87fc72576d4ff678b0c0bcd"],"expected_mode":"knowledge_base"}
+{"id":"v3h03","question":"秦可卿在梦中给王熙凤提了什么建议？","relevant_document_ids":["3497c40abc12d6b988544014b38a02654aad40a5420621077298485e733fb6c5"],"expected_mode":"knowledge_base"}
+{"id":"v3h04","question":"晴雯死后，宝玉为她写了什么祭文？","relevant_document_ids":["934c44937cfc46cf41ef1435481e16456406180114d68231040c6f9fbe395a65"],"expected_mode":"knowledge_base"}
+{"id":"v3h05","question":"香菱向黛玉学诗，黛玉让她先读谁的诗？","relevant_document_ids":["6505750f80ea0a6bfc8639bf571749e38c7bc32d84f4474c00392c94fabc473a"],"expected_mode":"knowledge_base"}
+{"id":"v3h06","question":"贾琏和谁在房里偷情，被王熙凤撞见？","relevant_document_ids":["80d1371a764a8aff170d3b29802902795732c29500fcc12e9979b5f25714cc7d"],"expected_mode":"knowledge_base"}
+{"id":"v3h07","question":"贾母去世时享年多少岁？","relevant_document_ids":["35837edccb626009cd4d9bc7b881bb8cfe81a03d161c134151f9365f7a5f1da1"],"expected_mode":"knowledge_base"}
+{"id":"v3h08","question":"贾雨村最后的结局是什么？","relevant_document_ids":["3079bd8ea1f12b36e40f1206096724415264bb7c72b83dccd89f30a601bb745b"],"expected_mode":"knowledge_base"}
+{"id":"v3hn01","question":"贾宝玉的生肖是什么？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v3hn02","question":"荣国府的电话号码是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v3hn03","question":"林黛玉的微博账号是什么？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v3hn04","question":"贾宝玉和林黛玉一共见过多少次面？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

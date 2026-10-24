@@ -1,0 +1,12 @@
+{"id":"v6h01","question":"宝玉用《会真记》里的哪句话打趣黛玉？","relevant_document_ids":["f5f9de27428fb38cf63407b9a42da3ac160d135c40c4cb87e89eaf0d415d55dd"],"expected_mode":"knowledge_base"}
+{"id":"v6h02","question":"宝玉看到的判词“霁月难逢，彩云易散”，原句后面接着什么？","relevant_document_ids":["30de327d15bc78baca1216e3066b707383ccf120768a69912ce9bcf8771627c3"],"expected_mode":"knowledge_base"}
+{"id":"v6h03","question":"宝钗的柳絮词“好风频借力，送我上青云”表达什么意思？","relevant_document_ids":["fa78a6376675c81a5c6ba9b7b0eb25a86e275969ad446922c89c40ce97b6bb79"],"expected_mode":"knowledge_base"}
+{"id":"v6h04","question":"宝玉说“赤条条来去无牵挂”，表达什么？","relevant_document_ids":["825475721055b7a21f1b7672e98b23301046570614dabebdf0bd846e49c273bc"],"expected_mode":"knowledge_base"}
+{"id":"v6h05","question":"莺儿在柳叶渚用什么编花篮？","relevant_document_ids":["f39f3c0b5cb63fda13510c36a0d8e1ed5310f92e133c98d4d585016b18ca6ce9"],"expected_mode":"knowledge_base"}
+{"id":"v6h06","question":"宝玉二次入家塾，贾政让他学什么？","relevant_document_ids":["f8608363ea52e75dcff9cc9a10aae907e876e6861da7d52be1d35338404492de"],"expected_mode":"knowledge_base"}
+{"id":"v6h07","question":"甄家仆人包勇来投靠，贾政怎么安排他？","relevant_document_ids":["4e1b5fb164751a786b082a750abf18472636f336cc1ae50662305a7859976c05"],"expected_mode":"knowledge_base"}
+{"id":"v6h08","question":"贾母散余资时给贾赦多少两银子？","relevant_document_ids":["5acb971a2c33ded54c595c5196858d7a218118cd6a8d55183409c317cc6ff033"],"expected_mode":"knowledge_base"}
+{"id":"v6hn01","question":"贾宝玉的指纹是什么？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v6hn02","question":"大观园的门票编号是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v6hn03","question":"如何用 R 语言分析红楼梦文本？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v6hn04","question":"贾宝玉的出生医院是哪家？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

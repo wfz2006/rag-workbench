@@ -1,0 +1,10 @@
+{"id":"v4d01","question":"贾瑞照风月鉴的正面，看到谁在招手？","relevant_document_ids":["97a2cbb21fbb0fe3509049fd561b7ca1e9fa85d8dede1615eae4ed4fc92e7f54"],"expected_mode":"knowledge_base"}
+{"id":"v4d02","question":"贾芸给王熙凤送了什么礼物？","relevant_document_ids":["0d2d8cbce5af7009e7b3b6d927bfe94951949f3b2a4231a8161b6a634afa1ca8"],"expected_mode":"knowledge_base"}
+{"id":"v4d03","question":"蒋玉菡送给宝玉什么？","relevant_document_ids":["ce49308599c2163818634d07d17b0e28a2ce6bdeadfa810ba4d025b374c18b54"],"expected_mode":"knowledge_base"}
+{"id":"v4d04","question":"龄官在蔷薇架下反复画什么字？","relevant_document_ids":["4545d54456bde649022f6965a923dea8b3c0d276c6f96a380255e3e617151239"],"expected_mode":"knowledge_base"}
+{"id":"v4d05","question":"宝玉挨打后想吃什么汤？","relevant_document_ids":["796920da9eb992cd533e06380cba6c470b941144ff54af4d1f5fbabb56da70be"],"expected_mode":"knowledge_base"}
+{"id":"v4d06","question":"刘姥姥醉卧怡红院，醒来先被谁发现？","relevant_document_ids":["3de22e0719cc89c69193e7607b077bcaeb25d7b59a14729e95cdab4014a543b8"],"expected_mode":"knowledge_base"}
+{"id":"v4d07","question":"茯苓霜、玫瑰露一案中，被冤枉关起来的是谁？","relevant_document_ids":["da68fbdd1710793cef13b0fae354d06fc87ee2b6521553bc77d71bd0c3b5e6b6"],"expected_mode":"knowledge_base"}
+{"id":"v4n01","question":"贾宝玉的身高是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v4n02","question":"贾宝玉的学号是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v4n03","question":"如何用 Kotlin 编写协程？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

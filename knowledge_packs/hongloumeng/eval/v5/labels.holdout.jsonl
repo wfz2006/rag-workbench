@@ -1,0 +1,15 @@
+{"id":"v5h01","question":"宝玉在薛姨妈处喝酒，谁劝他不要多喝？","relevant_document_ids":["3f442b13b579399b410a32753dcb8b3ec9a050acd1f7b356643fb72d354fb205"],"expected_mode":"knowledge_base"}
+{"id":"v5h02","question":"宝玉和黛玉在沁芳闸桥边共读什么书？","relevant_document_ids":["f5f9de27428fb38cf63407b9a42da3ac160d135c40c4cb87e89eaf0d415d55dd"],"expected_mode":"knowledge_base"}
+{"id":"v5h03","question":"赵姨娘请马道婆施法，要害宝玉和谁？","relevant_document_ids":["6c61de46f5da440b730a568c495dd36872dff26bab745c967346c7c83fdfb022"],"expected_mode":"knowledge_base"}
+{"id":"v5h04","question":"小红和贾芸通过哪个小丫头传递手帕？","relevant_document_ids":["e0336112f6fc8eed2c03ac31d6193e19584199e4efc65056cf20d4146b47e7d9"],"expected_mode":"knowledge_base"}
+{"id":"v5h05","question":"清虚观打醮时，谁给宝玉提亲？","relevant_document_ids":["d36af4622c960ff2f0d3596fbee6b810fdd11fcdcb435a5f2e66063ad67ce1f3"],"expected_mode":"knowledge_base"}
+{"id":"v5h06","question":"刘姥姥讲雪地抽柴的故事，宝玉派谁去找那个女孩？","relevant_document_ids":["a3fcbe7e8d9116a05a7e5725fefd270ebb85b719c63cdd093cc29dc12dc03521"],"expected_mode":"knowledge_base"}
+{"id":"v5h07","question":"夏金桂嫁给薛蟠后，把香菱改名为什么？","relevant_document_ids":["8efa6d7e1204d24cbb9ac4b0e6cd8257ecf078af4540774cae8091ab2092c315"],"expected_mode":"knowledge_base"}
+{"id":"v5h08","question":"宝玉说“任凭弱水三千，我只取一瓢饮”，表达什么意思？","relevant_document_ids":["4354be00ac464abe87560f6a1e13fa1323b73804035a41f4a168ef5c547aff5b"],"expected_mode":"knowledge_base"}
+{"id":"v5h09","question":"怡红院海棠冬天开花后，宝玉丢了什么？","relevant_document_ids":["e4c0e07c5dbcfc0f3edd8d42297dfc38ad1b114f74cd307b6c12e20fd7736062"],"expected_mode":"knowledge_base"}
+{"id":"v5h10","question":"黛玉临终前最后喊的是什么？","relevant_document_ids":["6f616003039e2561fc1c3c565812dc70470a5512bdb60585d6881424444602f6"],"expected_mode":"knowledge_base"}
+{"id":"v5hn01","question":"荣国府的微信号是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v5hn02","question":"如何用 PHP 编写一个 REST API？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v5hn03","question":"贾宝玉的出生证明编号是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v5hn04","question":"贾宝玉的 IQ 是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v5hn05","question":"贾宝玉的护照签发地是哪里？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

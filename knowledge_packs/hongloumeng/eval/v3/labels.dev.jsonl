@@ -1,0 +1,12 @@
+{"id":"v3d01","question":"甄士隐资助贾雨村进京赶考，送了多少银两和衣物？","relevant_document_ids":["618df3f5a793bd2efe2da9dc19580c571f2113147a6bd9ab7221a26f2d230511"],"expected_mode":"knowledge_base"}
+{"id":"v3d02","question":"贾雨村第一次被革职的原因是什么？","relevant_document_ids":["b7730d1412bb76144689903b2288e818264b2e43166a5ac381ab3a6908f46e39"],"expected_mode":"knowledge_base"}
+{"id":"v3d03","question":"刘姥姥第一次进荣国府，王熙凤给了她多少银子？","relevant_document_ids":["761cff98e67167a4f382edd0e8d68b7efb63d5a2f0be5db82e2119df7f72325d"],"expected_mode":"knowledge_base"}
+{"id":"v3d04","question":"王熙凤协理宁国府时，怎样处置一个迟到的下人？","relevant_document_ids":["eab8289c12113893802a41195f74ad45f898b8df63e14d494e62a4a91abcb73a"],"expected_mode":"knowledge_base"}
+{"id":"v3d05","question":"宝玉为什么给黛玉讲“耗子精”的故事？","relevant_document_ids":["981f80ac63e9effd05b1a1ee4fc1d52aabe25948f2c06ea97a5eaed683927471"],"expected_mode":"knowledge_base"}
+{"id":"v3d06","question":"宝钗在滴翠亭外扑蝶后，用什么法子脱身？","relevant_document_ids":["3d1ad0abd52b3a5b8ca6dbc28bfdffce8856e47da5a08430dcbb237eb8640c7c"],"expected_mode":"knowledge_base"}
+{"id":"v3d07","question":"宝玉挨打后，袭人向王夫人提出了什么建议？","relevant_document_ids":["6567a42ba23352cd726309d7eb5349231099d2bd3e78b94b6d95c77fb17c74ca"],"expected_mode":"knowledge_base"}
+{"id":"v3d08","question":"刘姥姥为什么给凤姐的女儿取名“巧哥儿”？","relevant_document_ids":["80af1dcafd8c8468025c880fcdf9388ce784df2cebad965fcb24891b7835f0ef"],"expected_mode":"knowledge_base"}
+{"id":"v3n01","question":"贾宝玉的体重是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v3n02","question":"荣国府一共有多少间房屋？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v3n03","question":"林黛玉的微信号是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v3n04","question":"如何用 Docker 部署一个静态网站？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

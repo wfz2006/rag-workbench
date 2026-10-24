@@ -1,0 +1,20 @@
+{"id":"d01","question":"通灵宝玉的前身是什么？","relevant_document_ids":["618df3f5a793bd2efe2da9dc19580c571f2113147a6bd9ab7221a26f2d230511"],"expected_mode":"knowledge_base"}
+{"id":"d02","question":"林黛玉初进贾府时，贾宝玉见到她说的第一句话是什么？","relevant_document_ids":["dcf9eb9a75491ce2a60a76bc77887af1b94f525ca2f5af0feca8c454532c2f62"],"expected_mode":"knowledge_base"}
+{"id":"d03","question":"刘姥姥一进荣国府，先找谁帮忙引见？","relevant_document_ids":["761cff98e67167a4f382edd0e8d68b7efb63d5a2f0be5db82e2119df7f72325d"],"expected_mode":"knowledge_base"}
+{"id":"d04","question":"秦可卿死后，贾珍为贾蓉捐了什么官职？","relevant_document_ids":["3497c40abc12d6b988544014b38a02654aad40a5420621077298485e733fb6c5"],"expected_mode":"knowledge_base"}
+{"id":"d05","question":"大观园试才题对额时，贾宝玉为通外河的桥闸题了什么名字？","relevant_document_ids":["54f07164340d1a5dcfe0062d24dcac458c2543d0cfe126c2f1a6165dd1c11af5"],"expected_mode":"knowledge_base"}
+{"id":"d06","question":"元妃省亲时，给园子题的名字是什么？","relevant_document_ids":["54f07164340d1a5dcfe0062d24dcac458c2543d0cfe126c2f1a6165dd1c11af5"],"expected_mode":"knowledge_base"}
+{"id":"d07","question":"林黛玉葬花时所吟诗句的开头两句是什么？","relevant_document_ids":["3d1ad0abd52b3a5b8ca6dbc28bfdffce8856e47da5a08430dcbb237eb8640c7c"],"expected_mode":"knowledge_base"}
+{"id":"d08","question":"宝玉挨打的一个直接导火索，是忠顺王府来索要谁？","relevant_document_ids":["75eeb944ddbcdcea08ceedadcea01c0a8c4084b51daa7e0ceebfd761172ffa70"],"expected_mode":"knowledge_base"}
+{"id":"d09","question":"香菱学诗时拜谁为师？","relevant_document_ids":["6505750f80ea0a6bfc8639bf571749e38c7bc32d84f4474c00392c94fabc473a"],"expected_mode":"knowledge_base"}
+{"id":"d10","question":"宝玉在梦中喊的“木石姻缘”是在反对什么？","relevant_document_ids":["d7babe4efdb0d8bc3dc516c25c630b8490079cf8f24ea20e206dba2580387656"],"expected_mode":"knowledge_base"}
+{"id":"d11","question":"探春在抄检大观园时认为，大家族若败落，必须先从哪里败起？","relevant_document_ids":["55f2a0a17cf26a128432b8b73dde5684826497182e6973ba369fc01988c86cf0"],"expected_mode":"knowledge_base"}
+{"id":"d12","question":"贾宝玉最后的结局是什么？","relevant_document_ids":["3079bd8ea1f12b36e40f1206096724415264bb7c72b83dccd89f30a601bb745b"],"expected_mode":"knowledge_base"}
+{"id":"d13","question":"查抄宁国府时，带人上门的锦衣府堂官是谁？","relevant_document_ids":["9580bad676c5575220be220e8b534e37c3efe7882aa0c80dfa8f8f38311173c3"],"expected_mode":"knowledge_base"}
+{"id":"d14","question":"晴雯撕扇的故事中，宝玉为什么让晴雯撕扇子？","relevant_document_ids":["a3701433a8ac2f50945217c1a3041888113b7bd4a1732214d569fa3697b7d0ff"],"expected_mode":"knowledge_base"}
+{"id":"d15","question":"贾宝玉初见林黛玉时，给她取的表字是什么？","relevant_document_ids":["dcf9eb9a75491ce2a60a76bc77887af1b94f525ca2f5af0feca8c454532c2f62"],"expected_mode":"knowledge_base"}
+{"id":"n01","question":"贾宝玉的身份证号码是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"n02","question":"荣国府的门牌号码是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"n03","question":"贾宝玉的生日是哪一天？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"n04","question":"秦可卿的生日是哪一天？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"n05","question":"如何用 Excel 制作数据透视表？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

@@ -1,0 +1,12 @@
+{"id":"v2h01","question":"冯渊为什么被打死？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2h02","question":"贾雨村补授了什么官职？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2h03","question":"葫芦僧原本是什么身份？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2h04","question":"小红原名叫什么？","relevant_document_ids":["0d2d8cbce5af7009e7b3b6d927bfe94951949f3b2a4231a8161b6a634afa1ca8"],"expected_mode":"knowledge_base"}
+{"id":"v2h05","question":"芳官被分给了谁？","relevant_document_ids":["b5fbd3ccedaddefbf1d34e8b347c4cb3db925ce7b3025b8c0c365d266042ada3"],"expected_mode":"knowledge_base"}
+{"id":"v2h06","question":"板儿是谁的儿子？","relevant_document_ids":["761cff98e67167a4f382edd0e8d68b7efb63d5a2f0be5db82e2119df7f72325d"],"expected_mode":"knowledge_base"}
+{"id":"v2h07","question":"薛蟠打死冯渊后，案子由谁审理？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2h08","question":"冯渊买的丫头是谁？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2hn01","question":"贾宝玉的护照号码是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v2hn02","question":"荣国府的WiFi密码是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v2hn03","question":"秦可卿的生日是哪一天？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v2hn04","question":"如何用 Python 读取 CSV 文件？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

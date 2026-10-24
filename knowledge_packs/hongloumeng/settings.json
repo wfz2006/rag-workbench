@@ -1,0 +1,16 @@
+{
+  "embedding_model": "BAAI/bge-small-zh-v1.5",
+  "embedding_revision": "7999e1d3359715c523056ef9478215996d62a620",
+  "chunk_size": 500,
+  "chunk_overlap": 60,
+  "top_k": 20,
+  "similarity_threshold": 0.43,
+  "retrieval_candidate_pool": 50,
+  "retrieval_context_window": 2,
+  "allow_general": false,
+  "teaching_profile_path": "disabled",
+  "domain_profile_path": "profile/story.md",
+  "retrieval_expansions_path": "retrieval_expansions.json",
+  "max_answer_claims": 2,
+  "max_answer_chars": 140
+}

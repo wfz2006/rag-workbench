@@ -1,0 +1,12 @@
+{"id":"v6d01","question":"焦大醉骂宁国府时，骂出的关于宁国府丑事的那句原话是什么？","relevant_document_ids":["a268ba422ed3e4353a36fec8b25754f7e85da0d10ebfac42c5ffca201174c4b1"],"expected_mode":"knowledge_base"}
+{"id":"v6d02","question":"刘姥姥在贾母宴席上说的自嘲话是什么？","relevant_document_ids":["f69f6bae7cd9d4c3c65b9f7558b4160e80b0acc0ee62833f2bf729f72861c4f2"],"expected_mode":"knowledge_base"}
+{"id":"v6d03","question":"宝玉说“女儿是水作的骨肉，男人是泥作的骨肉”，表达什么意思？","relevant_document_ids":["b7730d1412bb76144689903b2288e818264b2e43166a5ac381ab3a6908f46e39"],"expected_mode":"knowledge_base"}
+{"id":"v6d04","question":"宝玉对黛玉说“你放心”，表达什么意思？","relevant_document_ids":["a78b6a9f37346fbd8fb1f300d86328560b902bee60af0961f53717fd28fc7201"],"expected_mode":"knowledge_base"}
+{"id":"v6d05","question":"贾环和莺儿等赶围棋时为什么着急？","relevant_document_ids":["64381ee3e676c47faa50f0414bb43d2adca71d5e2e21f4d6ac36b0eb8cdc672a"],"expected_mode":"knowledge_base"}
+{"id":"v6d06","question":"探春理家时，给赵姨娘兄弟的丧葬费是多少？","relevant_document_ids":["3a34db40f7773b50f083857b02bb148537fef42523de09f71c2d4d93063d42ba"],"expected_mode":"knowledge_base"}
+{"id":"v6d07","question":"黛玉看到家乡土物后为什么伤心？","relevant_document_ids":["4619a8b4062f1a7e440153fadbbe168f997a48178bc4e1da75f7ff9ef49a36a2"],"expected_mode":"knowledge_base"}
+{"id":"v6d08","question":"贾母去世后，鸳鸯怎么死的？","relevant_document_ids":["133c38a9a4ae3e0c3a448abee257738c6e14c215c3d1b272c09a35dd6a2b204e"],"expected_mode":"knowledge_base"}
+{"id":"v6n01","question":"贾宝玉的社保号是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v6n02","question":"荣国府的车牌号是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v6n03","question":"如何用 Scala 编写一个 Actor 系统？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v6n04","question":"贾府一年的电费是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

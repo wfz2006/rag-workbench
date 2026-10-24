@@ -1,0 +1,10 @@
+{"id":"v4h01","question":"紫鹃说黛玉要回苏州，宝玉有什么反应？","relevant_document_ids":["67f500d6fea3d020f6a0eac0553350c871dad416aaee0ba2a3daf675b04c82d5"],"expected_mode":"knowledge_base"}
+{"id":"v4h02","question":"怡红院夜宴抽花名签，宝钗抽到什么花？","relevant_document_ids":["4075a5d4e579bb464940a6a4e40213faa23a52f1fb6d516cd43a51cd4d922e3b"],"expected_mode":"knowledge_base"}
+{"id":"v4h03","question":"尤三姐为什么自刎？","relevant_document_ids":["77cbc798fb043f45b190dd2db852ed0c648d7d8b383bd3acc4f10d0205fbab19"],"expected_mode":"knowledge_base"}
+{"id":"v4h04","question":"重建桃花社时，谁写了《桃花行》？","relevant_document_ids":["fa78a6376675c81a5c6ba9b7b0eb25a86e275969ad446922c89c40ce97b6bb79"],"expected_mode":"knowledge_base"}
+{"id":"v4h05","question":"傻大姐在大观园山石后拾到什么，引发抄检？","relevant_document_ids":["c45dbcb1731ce92992215e5f66619ad5f567881cb1ad2a53c63ef9d2de353f20"],"expected_mode":"knowledge_base"}
+{"id":"v4h06","question":"黛玉和湘云在凹晶馆联诗，最后谁出来续完？","relevant_document_ids":["2c65749cb0b709b448f142c6c8e6e91df7b66632d34948f65fad562ef299e013"],"expected_mode":"knowledge_base"}
+{"id":"v4h07","question":"薛宝琴在芦雪广披着什么名贵斗篷？","relevant_document_ids":["24d1ad619cbc19709d636afae42b89368af2f713ad944f669e3e486e830178d7"],"expected_mode":"knowledge_base"}
+{"id":"v4hn01","question":"贾宝玉的星座是什么？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v4hn02","question":"荣国府的电子邮箱是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v4hn03","question":"如何用 Rust 编写一个 WebSocket 服务器？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

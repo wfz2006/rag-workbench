@@ -1,0 +1,14 @@
+{"id":"v2d01","question":"王熙凤的丈夫是谁？","relevant_document_ids":["dcf9eb9a75491ce2a60a76bc77887af1b94f525ca2f5af0feca8c454532c2f62"],"expected_mode":"knowledge_base"}
+{"id":"v2d02","question":"贾宝玉的母亲是谁？","relevant_document_ids":["b7730d1412bb76144689903b2288e818264b2e43166a5ac381ab3a6908f46e39"],"expected_mode":"knowledge_base"}
+{"id":"v2d03","question":"林黛玉的父亲是谁？","relevant_document_ids":["dcf9eb9a75491ce2a60a76bc77887af1b94f525ca2f5af0feca8c454532c2f62"],"expected_mode":"knowledge_base"}
+{"id":"v2d04","question":"薛宝钗的母亲是谁？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2d05","question":"贾探春是谁的女儿？","relevant_document_ids":["b7730d1412bb76144689903b2288e818264b2e43166a5ac381ab3a6908f46e39"],"expected_mode":"knowledge_base"}
+{"id":"v2d06","question":"贾兰是谁的儿子？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2d07","question":"平儿是谁的丫鬟？","relevant_document_ids":["761cff98e67167a4f382edd0e8d68b7efb63d5a2f0be5db82e2119df7f72325d"],"expected_mode":"knowledge_base"}
+{"id":"v2d08","question":"香菱的原名是什么？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2d09","question":"贾蓉的父亲是谁？","relevant_document_ids":["b7730d1412bb76144689903b2288e818264b2e43166a5ac381ab3a6908f46e39"],"expected_mode":"knowledge_base"}
+{"id":"v2d10","question":"薛蟠的妹妹是谁？","relevant_document_ids":["da89b7334f8fb236a2df8f39b832a567f8740514003e5b0691ac84dedeae4fd8"],"expected_mode":"knowledge_base"}
+{"id":"v2n01","question":"贾宝玉出生在哪一年？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v2n02","question":"大观园的门票价格是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v2n03","question":"林黛玉的电子邮箱是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v2n04","question":"如何用 SQL 查询学生成绩？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}

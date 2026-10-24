@@ -1,0 +1,15 @@
+{"id":"v5d01","question":"周瑞家的送宫花，最后送到谁手里？","relevant_document_ids":["a268ba422ed3e4353a36fec8b25754f7e85da0d10ebfac42c5ffca201174c4b1"],"expected_mode":"knowledge_base"}
+{"id":"v5d02","question":"宝玉和秦钟在家塾里与谁发生冲突？","relevant_document_ids":["8d62dcf2414c216076f166b49ddc43c502c2bc30fc460532ca67314431476657"],"expected_mode":"knowledge_base"}
+{"id":"v5d03","question":"秦可卿病重时，贾珍请来的张友士是谁推荐的？","relevant_document_ids":["0c8a3d7cde848c8d4d4bddb9b904752f25433e126b1df01ad756e67950b81ac7"],"expected_mode":"knowledge_base"}
+{"id":"v5d04","question":"贾元春晋封为什么妃？","relevant_document_ids":["247a0659b80633e0294c4d91615c7b65051fa1abcbdbffab6221bde53c4ce9be"],"expected_mode":"knowledge_base"}
+{"id":"v5d05","question":"宝玉听了哪支曲文后悟到禅机？","relevant_document_ids":["825475721055b7a21f1b7672e98b23301046570614dabebdf0bd846e49c273bc"],"expected_mode":"knowledge_base"}
+{"id":"v5d06","question":"探春发起海棠社时，李纨给自己取的诗号是什么？","relevant_document_ids":["781544e221be6b6a99aaf269beba791b8171a8e849307c0f562a7c86e4dcc199"],"expected_mode":"knowledge_base"}
+{"id":"v5d07","question":"菊花诗会上，李纨评哪首诗为第一？","relevant_document_ids":["be602209466574d4972a42b9beef46bd491787118a5967d222d26c0861f85667"],"expected_mode":"knowledge_base"}
+{"id":"v5d08","question":"贾赦要纳鸳鸯为妾，鸳鸯怎样表明宁死不从？","relevant_document_ids":["85e655e9109f1bbd5f3673392c31788fefafbe29d625a9426524fc5eafa9f873"],"expected_mode":"knowledge_base"}
+{"id":"v5d09","question":"芦雪广联诗，宝玉被罚去做什么？","relevant_document_ids":["af496a5ee95376a4cd4cbec5a807ec0e97f0c92bbc163433ac406f1309637057"],"expected_mode":"knowledge_base"}
+{"id":"v5d10","question":"宝玉私下去看晴雯，晴雯送给他什么？","relevant_document_ids":["dea8175312e8c12ac7b90195837d5a973d935d4a6c2477070f73feeec10f60c9"],"expected_mode":"knowledge_base"}
+{"id":"v5n01","question":"贾宝玉的血型是什么？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v5n02","question":"荣国府的银行账号是多少？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v5n03","question":"如何用 Swift 编写一个 iOS 应用？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v5n04","question":"贾宝玉的指纹是什么？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
+{"id":"v5n05","question":"大观园里一共有多少位仆人？","relevant_document_ids":[],"expected_mode":"insufficient_evidence"}
