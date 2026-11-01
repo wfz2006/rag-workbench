@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="有机半导体文献数据工作台：文献提取、结构化存储、图表处理与性能预测的可行性及分阶段实施方案。">
+  <title>有机半导体文献数据工作台 · 方案报告 V1</title>
+  <style>
+    :root {
+      --paper:#f6f3eb; --surface:#fdfbf6; --soft:#ede9df; --ink:#2c372e;
+      --muted:#6d746a; --faint:#8b8f85; --sage:#536c55; --sage-soft:#e6ecdf;
+      --clay:#aa563c; --clay-soft:#f3e4d9; --hair:rgba(73,91,67,.16);
+      --white:#fffef9; --nav:rgba(253,251,246,.93); --shadow:0 22px 70px -35px rgba(50,63,40,.22);
+      --curve:cubic-bezier(.22,.8,.24,1); --radius:26px;
+      --sans:"Segoe UI Variable Text","Microsoft YaHei UI","PingFang SC",sans-serif;
+      --serif:"Noto Serif SC","Source Han Serif SC","STSong","SimSun",Georgia,serif;
+      --mono:"Cascadia Code","Consolas",monospace;
+    }
+    html[data-theme="dark"] {
+      --paper:#1c231e; --surface:#242d26; --soft:#2c372e; --ink:#edece0;
+      --muted:#b1b9aa; --faint:#96a18f; --sage:#b6caa4; --sage-soft:#354433;
+      --clay:#e1a086; --clay-soft:#45362d; --hair:rgba(187,205,167,.19);
+      --white:#303b31; --nav:rgba(36,45,38,.95); --shadow:0 22px 70px -35px rgba(0,0,0,.28);
+    }
+    * {box-sizing:border-box}
+    html {scroll-behavior:smooth;scroll-padding-top:108px}
+    body {margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.85;-webkit-font-smoothing:antialiased}
+    body::before {content:"";position:fixed;inset:0;pointer-events:none;z-index:8;opacity:.025;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.84' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' opacity='.65' filter='url(%23n)'/%3E%3C/svg%3E")}
+    button,a {-webkit-tap-highlight-color:transparent}
+    button {font:inherit;color:inherit;cursor:pointer}
+    a {color:inherit;text-decoration:none}
+    a,button,summary {touch-action:manipulation}
+    button:focus-visible,a:focus-visible,summary:focus-visible {outline:3px solid var(--clay);outline-offset:5px}
+    button:disabled {cursor:default}
+    ::selection {background:var(--clay-soft);color:var(--ink)}
+    h1,h2,h3,h4,p {margin:0}
+    h1,h2 {font-family:var(--serif);font-weight:600;letter-spacing:-.045em}
+    h2 {text-wrap:balance}
+    h3 {font-size:20px;line-height:1.5;font-weight:600;letter-spacing:-.025em}
+    small {font-size:12px}
+    svg {display:block;max-width:100%}
+    ul {margin:0;padding:0;list-style:none}
+    strong {font-weight:650}
+    [hidden] {display:none!important}
+    .wrap {width:min(1180px,calc(100% - 88px));margin-inline:auto}
+    .masthead {display:flex;align-items:center;justify-content:space-between;gap:24px;padding:30px 0 22px}
+    .brand {display:flex;align-items:center;gap:12px}
+    .brand-mark {height:34px;width:34px;color:var(--sage)}
+    .brand-name {font-size:15px;font-weight:650;line-height:1.4}
+    .brand-sub {display:block;font-size:10px;letter-spacing:.16em;color:var(--muted);font-weight:400;margin-top:3px}
+    .edition {text-align:right;font-size:11px;letter-spacing:.1em;color:var(--muted);line-height:1.7}
+    .edition b {display:block;color:var(--ink);font-weight:500}
+    .nav-holder {position:sticky;top:18px;z-index:5;width:min(1180px,calc(100% - 56px));margin:0 auto}
+    .reading-nav {display:flex;align-items:center;justify-content:space-between;gap:20px;background:var(--nav);backdrop-filter:blur(14px);padding:8px 10px 8px 24px;border-radius:40px;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 7px 26px -14px rgba(63,80,49,.2);border:1px solid var(--hair)}
+    .nav-label {font-size:12px;white-space:nowrap;color:var(--muted);display:flex;gap:9px;align-items:center}
+    .dot {display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--sage);flex:0 0 auto}
+    .nav-links {display:flex;gap:25px;align-items:center;font-size:12px}
+    .nav-links a {padding:7px 0;color:var(--muted);position:relative;transition:color .3s var(--curve)}
+    .nav-links a:hover,.nav-links a[aria-current="location"] {color:var(--clay)}
+    .nav-links a[aria-current="location"]::after {content:"";position:absolute;width:4px;height:4px;border-radius:50%;background:currentColor;bottom:0;left:calc(50% - 2px)}
+    .nav-actions {display:flex;gap:6px;align-items:center}
+    .icon-button {height:36px;width:36px;display:grid;place-items:center;border:0;background:transparent;border-radius:50%;transition:background .35s var(--curve),transform .35s var(--curve)}
+    .icon-button svg {width:18px;height:18px}
+    .icon-button:hover {background:var(--soft);transform:translateY(-1px)}
+    .icon-button:active {transform:scale(.96)}
+    .sun-icon {display:none}
+    html[data-theme="dark"] .sun-icon {display:block}
+    html[data-theme="dark"] .moon-icon {display:none}
+    .button {display:inline-flex;align-items:center;justify-content:center;gap:22px;min-height:48px;padding:7px 8px 7px 23px;border-radius:40px;border:0;font-size:13px;background:var(--sage);color:var(--surface);font-weight:550;transition:transform .45s var(--curve),background .45s var(--curve)}
+    html[data-theme="dark"] .button {color:var(--paper)}
+    .button .button-icon {height:33px;width:33px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.15);transition:transform .5s var(--curve)}
+    .button .button-icon svg {height:16px;width:16px}
+    .button:hover {transform:translateY(-2px)}
+    .button:hover .button-icon {transform:translate(1px,-1px) rotate(-10deg)}
+    .button:active {transform:scale(.98)}
+    .button.compact {min-height:36px;padding:4px 5px 4px 15px;font-size:11px;gap:10px}
+    .button.compact .button-icon {height:27px;width:27px}
+    .menu-button {display:none;position:relative}
+    .menu-line {position:absolute;left:10px;width:16px;height:1px;background:var(--ink);transition:transform .4s var(--curve)}
+    .menu-line:first-child {transform:translateY(-3px)}
+    .menu-line:last-child {transform:translateY(3px)}
+    .menu-button[aria-expanded="true"] .menu-line:first-child {transform:rotate(45deg)}
+    .menu-button[aria-expanded="true"] .menu-line:last-child {transform:rotate(-45deg)}
+    .mobile-menu {margin-top:8px;padding:20px 26px;background:var(--surface);border-radius:24px;border:1px solid var(--hair);box-shadow:var(--shadow)}
+    .mobile-menu a {display:block;font-family:var(--serif);font-size:23px;padding:10px 0;animation:menu-in .45s var(--curve) both}
+    .mobile-menu a:nth-child(2) {animation-delay:35ms}.mobile-menu a:nth-child(3) {animation-delay:70ms}.mobile-menu a:nth-child(4) {animation-delay:105ms}
+    .hero {display:grid;grid-template-columns:1.15fr 1fr;align-items:center;gap:70px;padding-top:100px;padding-bottom:100px}
+    .eyebrow {display:flex;align-items:center;gap:10px;color:var(--clay);font-size:10px;letter-spacing:.16em;text-transform:uppercase;font-weight:550;margin-bottom:28px}
+    .eyebrow::before {content:"";width:22px;height:1px;background:currentColor}
+    .hero h1 {font-size:clamp(38px,4.25vw,64px);line-height:1.34;letter-spacing:-.055em}
+    .hero h1 em {font-style:normal;color:var(--sage)}
+    .hero-subtitle {font-size:18px;letter-spacing:.025em;margin-top:22px;font-weight:500}
+    .hero-copy {color:var(--muted);max-width:490px;font-size:14px;line-height:2.1;margin-top:18px}
+    .hero-actions {display:flex;align-items:center;flex-wrap:wrap;gap:24px;margin-top:32px}
+    .text-link {font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:10px;transition:color .3s var(--curve)}
+    .text-link:hover {color:var(--clay)}
+    .text-link svg {width:14px;height:14px}
+    .bezel {padding:7px;background:var(--soft);border:1px solid var(--hair);border-radius:calc(var(--radius) + 7px)}
+    .panel {background:var(--surface);border-radius:var(--radius);box-shadow:inset 0 1px 0 rgba(255,255,255,.22);overflow:hidden}
+    .hero-art {box-shadow:var(--shadow);position:relative}
+    .art-header {display:flex;justify-content:space-between;align-items:center;padding:24px 26px 0;font-size:10px;letter-spacing:.1em;color:var(--muted)}
+    .art-header span:first-child {display:flex;gap:7px;align-items:center}
+    .art-graphic {padding:18px 22px 4px}
+    .art-graphic svg {width:100%;height:auto;color:var(--ink)}
+    .art-caption {padding:0 26px 24px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}
+    .art-caption b {display:block;font-family:var(--serif);font-size:22px;font-weight:600;letter-spacing:-.035em}
+    .art-caption p {font-size:11px;color:var(--muted);margin-top:4px}
+    .art-stamp {font-size:9px;line-height:1.6;letter-spacing:.08em;text-align:right;color:var(--clay);white-space:nowrap}
+    .verdict {display:flex;align-items:center;gap:34px;padding:30px 0;border-block:1px solid var(--hair)}
+    .verdict-label {width:154px;flex-shrink:0;color:var(--sage);font-size:11px;letter-spacing:.1em}
+    .verdict p {font-size:15px;line-height:1.9;max-width:830px}
+    .verdict p strong {font-weight:600;color:var(--clay)}
+    .report-section {padding:96px 0;border-bottom:1px solid var(--hair)}
+    .section-head {display:grid;grid-template-columns:154px 1fr;gap:34px;margin-bottom:44px}
+    .section-id {font-family:var(--mono);font-size:11px;color:var(--clay);padding-top:13px;letter-spacing:.06em}
+    .section-id span {display:block;font-family:var(--sans);font-size:10px;color:var(--muted);margin-top:7px;letter-spacing:.14em;text-transform:uppercase}
+    .section-head h2 {font-size:clamp(29px,3vw,40px);line-height:1.4;letter-spacing:-.045em}
+    .section-lead {font-size:14px;color:var(--muted);max-width:730px;line-height:2;margin-top:17px}
+    .inset {margin-left:188px}
+    .requirement-row {display:grid;grid-template-columns:44px 1fr 1.2fr 84px;align-items:start;gap:20px;padding:24px 0;border-top:1px solid var(--hair)}
+    .requirement-row:last-child {border-bottom:1px solid var(--hair)}
+    .row-number {font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:3px}
+    .requirement-row h3 {font-size:15px;font-weight:550}
+    .requirement-row p {font-size:12px;color:var(--muted);line-height:1.95}
+    .tag {display:inline-flex;align-items:center;justify-content:center;width:max-content;border-radius:20px;padding:4px 10px;font-size:10px;white-space:nowrap;background:var(--sage-soft);color:var(--sage);line-height:1.7;letter-spacing:.03em}
+    .tag.clay {background:var(--clay-soft);color:var(--clay)}
+    .tag.neutral {background:var(--soft);color:var(--muted)}
+    .aside-note {margin-top:24px;font-size:12px;color:var(--muted);line-height:1.95}
+    .record-shell {padding:7px}
+    .record-header {display:flex;justify-content:space-between;align-items:center;gap:20px;padding:24px 30px;border-bottom:1px solid var(--hair)}
+    .record-header .label {font-size:11px;color:var(--muted)}
+    .record-header h3 {font-size:16px;margin-top:3px}
+    .segmented {display:flex;gap:3px;background:var(--soft);padding:4px;border-radius:30px}
+    .segmented button {border:0;background:transparent;border-radius:24px;min-height:35px;min-width:72px;font-size:11px;color:var(--muted);padding:7px 16px;transition:background .35s var(--curve),color .35s var(--curve),transform .35s var(--curve)}
+    .segmented button[aria-selected="true"] {background:var(--surface);color:var(--ink);box-shadow:0 2px 8px -4px rgba(45,65,36,.25)}
+    .segmented button:active {transform:scale(.98)}
+    .record-content {display:grid;grid-template-columns:1.05fr 1fr}
+    .record-main {padding:30px;border-right:1px solid var(--hair)}
+    .record-type {display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--muted);margin-bottom:20px}
+    .record-value {font-family:var(--serif);font-size:32px;line-height:1.6;letter-spacing:-.03em}
+    .record-unit {font-size:12px;color:var(--muted);margin-top:6px;min-height:24px}
+    .field-list {margin-top:24px}
+    .field-list div {display:grid;grid-template-columns:83px 1fr;gap:14px;padding:10px 0;border-top:1px solid var(--hair);font-size:12px}
+    .field-list dt {color:var(--muted)}
+    .field-list dd {margin:0;color:var(--ink)}
+    .evidence-side {padding:30px;background:color-mix(in srgb,var(--sage-soft) 28%,var(--surface))}
+    .evidence-kicker {font-size:10px;letter-spacing:.1em;color:var(--sage);margin-bottom:16px}
+    .evidence-title {font-family:var(--serif);font-size:21px;line-height:1.6;letter-spacing:-.03em}
+    .evidence-copy {font-size:12px;color:var(--muted);line-height:2;margin:12px 0 22px}
+    .evidence-line {display:flex;align-items:flex-start;gap:12px;margin-top:14px;font-size:12px}
+    .evidence-line svg {flex-shrink:0;height:18px;width:18px;margin-top:2px;color:var(--sage)}
+    .evidence-line small {display:block;color:var(--muted);font-size:11px}
+    .record-foot {padding:17px 30px;font-size:11px;line-height:1.9;color:var(--clay);border-top:1px solid var(--hair)}
+    .relation-chain {display:flex;align-items:center;justify-content:space-between;gap:10px;padding:28px 0 0}
+    .relation-chain .chain-item {font-size:12px;line-height:1.7;flex:1;text-align:center}
+    .chain-item span {display:block;color:var(--faint);font-size:9px;letter-spacing:.08em;margin-top:2px}
+    .chain-arrow {color:var(--faint);font-size:13px}
+    .foundation {display:grid;grid-template-columns:1fr 1.12fr;gap:28px}
+    .foundation .panel {padding:34px}
+    .foundation h3 {font-family:var(--serif);font-size:26px;margin:12px 0 22px}
+    .feature-item {position:relative;padding:12px 0 12px 22px;font-size:13px;border-top:1px solid var(--hair)}
+    .feature-item::before {content:"";position:absolute;height:4px;width:4px;top:23px;left:2px;border-radius:50%;background:var(--sage)}
+    .feature-item small {display:block;font-size:11px;color:var(--muted);margin-top:4px}
+    .foundation .new .feature-item::before {background:var(--clay)}
+    .design-rule {margin-top:30px;display:grid;grid-template-columns:34px 1fr;gap:18px;color:var(--muted);font-size:12px;line-height:2}
+    .design-rule svg {height:26px;width:26px;color:var(--sage);margin-top:3px}
+    .route {display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:16px;margin-top:4px}
+    .route-step {padding:27px 24px;border-radius:24px;background:var(--soft);min-width:0}
+    .route-step b {display:block;font-size:14px;margin:10px 0}
+    .route-step p {font-size:11px;color:var(--muted);line-height:1.9}
+    .route-index {font-family:var(--mono);font-size:10px;color:var(--clay)}
+    .route-arrow {align-self:center;color:var(--faint)}
+    .route-outcome {margin-top:18px;display:flex;justify-content:space-between;gap:22px;background:var(--sage-soft);color:var(--sage);border-radius:20px;padding:20px 24px;font-size:12px;align-items:center}
+    .route-outcome span:first-child {font-weight:600}
+    .route-outcome span:last-child {font-size:11px;text-align:right}
+    .phase-layout {display:grid;grid-template-columns:.72fr 1.5fr;gap:48px;align-items:start}
+    .phase-aside {padding-top:10px}
+    .phase-aside .big-number {font-family:var(--serif);font-size:67px;letter-spacing:-.07em;line-height:1.2;color:var(--sage)}
+    .phase-aside .big-number span {font-family:var(--sans);font-size:12px;letter-spacing:0;margin-left:8px;color:var(--muted)}
+    .phase-aside h3 {font-size:16px;margin:18px 0 10px}
+    .phase-aside p {font-size:12px;color:var(--muted);line-height:2}
+    .phase-accordions {display:grid;gap:12px}
+    .phase {padding:5px;background:var(--soft);border:1px solid var(--hair);border-radius:25px}
+    .phase-inner {border-radius:20px;background:var(--surface);box-shadow:inset 0 1px 0 rgba(255,255,255,.2);overflow:hidden}
+    .phase summary {list-style:none;cursor:pointer;display:grid;grid-template-columns:34px 1fr auto 16px;align-items:center;gap:14px;padding:23px}
+    summary::-webkit-details-marker {display:none}
+    .phase summary .phase-number {font-family:var(--mono);font-size:12px;color:var(--clay)}
+    .phase summary b {font-size:14px;line-height:1.7;font-weight:550}
+    .phase summary .effort {font-size:10px;color:var(--muted);white-space:nowrap}
+    .chevron {height:12px;width:12px;transition:transform .4s var(--curve)}
+    details[open] .chevron {transform:rotate(180deg)}
+    .phase-body {padding:0 23px 26px 71px}
+    .phase-body p {font-size:12px;color:var(--muted);line-height:2;margin-bottom:16px}
+    .phase-deliverable {font-size:12px;color:var(--sage);padding-left:14px;border-left:2px solid var(--sage)}
+    .phase-conditions {font-size:11px!important;color:var(--clay)!important;margin:14px 0 0!important}
+    .effort-note {font-size:11px;color:var(--muted);margin-top:28px;line-height:2}
+    .capability-table {width:100%;border-collapse:collapse;text-align:left;table-layout:fixed}
+    .capability-table col:nth-child(1) {width:24%}.capability-table col:nth-child(2) {width:38%}.capability-table col:nth-child(3) {width:38%}
+    .capability-table th {font-size:10px;letter-spacing:.08em;color:var(--muted);font-weight:500;padding:0 18px 17px 0;border-bottom:1px solid var(--hair)}
+    .capability-table td {vertical-align:top;padding:20px 24px 20px 0;border-bottom:1px solid var(--hair);font-size:12px;line-height:1.95}
+    .capability-table td:first-child {font-weight:550}
+    .capability-table td:last-child {color:var(--muted)}
+    .capability-table td small {display:block;font-size:10px;color:var(--clay);margin-top:5px}
+    .tools {display:grid;grid-template-columns:1fr 1fr;gap:18px}
+    .tool {padding:5px;background:var(--soft);border:1px solid var(--hair);border-radius:23px}
+    .tool-inner {padding:25px;background:var(--surface);border-radius:18px;min-height:165px}
+    .tool-heading {display:flex;justify-content:space-between;gap:20px;align-items:center}
+    .tool-name {font-size:17px;font-weight:600;letter-spacing:-.02em}
+    .tool-heading a {color:var(--muted);border-radius:50%;width:28px;height:28px;display:grid;place-items:center;transition:background .35s var(--curve),transform .35s var(--curve)}
+    .tool-heading a:hover {background:var(--soft);transform:translate(1px,-1px)}
+    .tool-heading svg {width:14px;height:14px}
+    .tool-description {font-size:12px;color:var(--muted);line-height:1.95;margin:13px 0}
+    .tool-meta {display:flex;flex-wrap:wrap;gap:7px}
+    .tool-meta span {font-size:9px;color:var(--sage);border-radius:12px;background:var(--sage-soft);padding:2px 8px}
+    .extra-tools {padding-top:25px;margin-top:8px}
+    .extra-tools summary {cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px;padding:13px 0;border-top:1px solid var(--hair)}
+    .extra-tools ul {padding:12px 0 0}
+    .extra-tools li {padding:12px 0;font-size:12px;color:var(--muted);line-height:2}
+    .extra-tools a {color:var(--ink);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:4px}
+    .ownership-note {font-size:12px;color:var(--muted);margin-top:24px;line-height:2}
+    .prediction {padding:7px;background:var(--soft);border:1px solid var(--hair);border-radius:33px}
+    .prediction-inner {display:grid;grid-template-columns:.9fr 1.1fr;border-radius:26px;overflow:hidden;background:var(--surface)}
+    .prediction-thesis {padding:38px;background:var(--sage-soft);display:flex;flex-direction:column;justify-content:space-between;gap:36px}
+    .prediction-thesis h3 {font-family:var(--serif);font-size:30px;line-height:1.65;letter-spacing:-.04em;color:var(--sage)}
+    .prediction-thesis p {font-size:12px;color:var(--sage);line-height:2}
+    .prediction-steps {padding:10px 32px}
+    .prediction-step {display:grid;grid-template-columns:28px 1fr;gap:16px;padding:23px 0;border-bottom:1px solid var(--hair)}
+    .prediction-step:last-child {border-bottom:0}
+    .prediction-step .n {font-size:10px;color:var(--clay);font-family:var(--mono);padding-top:3px}
+    .prediction-step b {font-size:13px;font-weight:550}
+    .prediction-step p {font-size:11px;color:var(--muted);line-height:2;margin-top:6px}
+    .sample-checks {display:grid;grid-template-columns:1fr 1fr;gap:12px 38px}
+    .sample-check {display:grid;grid-template-columns:22px 1fr;gap:16px;padding:22px 0;border-top:1px solid var(--hair)}
+    .sample-check .check {font-family:var(--mono);font-size:10px;color:var(--clay);padding-top:5px}
+    .sample-check b {display:block;font-size:14px;font-weight:550}
+    .sample-check p {font-size:12px;color:var(--muted);margin-top:7px;line-height:2}
+    .closing {margin-top:42px;display:flex;align-items:center;justify-content:space-between;gap:35px;background:var(--sage-soft);border-radius:24px;padding:28px 32px}
+    .closing h3 {font-family:var(--serif);font-size:23px;color:var(--sage)}
+    .closing p {font-size:11px;color:var(--sage);margin-top:7px}
+    .closing a {white-space:nowrap;font-size:11px;display:flex;align-items:center;gap:10px;color:var(--sage)}
+    .closing svg {height:15px;width:15px}
+    .sources {margin-top:36px;display:grid;grid-template-columns:1fr 1fr;gap:12px 32px;font-size:11px;color:var(--muted)}
+    .sources a {display:flex;gap:10px;align-items:baseline;line-height:1.9;text-decoration:underline;text-underline-offset:4px;text-decoration-color:var(--hair);overflow-wrap:anywhere}
+    .sources a:hover {color:var(--clay)}
+    .sources .source-n {color:var(--faint);font-family:var(--mono);font-size:9px}
+    .report-footer {padding:32px 0 42px;display:flex;justify-content:space-between;gap:28px;align-items:flex-start;font-size:10px;color:var(--muted);line-height:1.9}
+    .report-footer .footer-brand {font-weight:550;color:var(--ink);font-size:11px;display:block;margin-bottom:4px}
+    .report-footer .footer-status {text-align:right;max-width:490px}
+    .reveal {opacity:1}
+    .motion .reveal {opacity:0;transform:translateY(20px);transition:opacity .85s var(--curve),transform .85s var(--curve)}
+    .motion .reveal.visible {opacity:1;transform:translateY(0)}
+    @keyframes menu-in {from {opacity:0;transform:translateY(10px)}to {opacity:1;transform:translateY(0)}}
+    .sr-only {position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    @media (min-width:801px) {.mobile-menu {display:none!important}}
+    @media (max-width:1100px) {
+      .wrap {width:calc(100% - 64px)}.hero {gap:40px;padding-block:80px}.nav-links {gap:18px}
+      .nav-label {display:none}.section-head {grid-template-columns:110px 1fr;gap:24px}.inset {margin-left:134px}
+      .verdict-label {width:110px}.verdict {gap:24px}.requirement-row {grid-template-columns:30px 1fr 1.1fr 75px;gap:14px}
+      .record-content {grid-template-columns:1fr 1fr}.record-value {font-size:28px}.foundation .panel {padding:27px}
+      .phase-layout {gap:28px}.phase summary {gap:10px;padding:20px}.phase-body {padding:0 20px 25px 64px}
+    }
+    @media (max-width:800px) {
+      .wrap {width:calc(100% - 40px)}.masthead {padding:22px 0 20px}.brand-name {font-size:13px}.brand-sub {font-size:8px}.brand-mark {height:29px;width:29px}.edition {font-size:9px}
+      .nav-holder {width:calc(100% - 32px);top:12px}.reading-nav {padding-left:18px;gap:12px}.nav-label {display:flex;font-size:11px}.nav-links {display:none}.menu-button {display:grid}
+      .hero {grid-template-columns:1fr;gap:44px;padding:64px 0}.hero h1 {font-size:clamp(36px,7.4vw,56px)}.hero-subtitle {font-size:16px}.hero-copy {max-width:580px}
+      .hero-art {max-width:500px;width:100%;justify-self:center}.hero .eyebrow {font-size:9px;margin-bottom:24px}.hero-actions {gap:20px;margin-top:28px}
+      .verdict {display:block;padding:27px 0}.verdict-label {width:auto;margin-bottom:12px}.verdict p {font-size:14px}
+      .report-section {padding:64px 0}.section-head {grid-template-columns:1fr;gap:14px;margin-bottom:30px}.section-id {padding:0;display:flex;gap:12px;align-items:center}.section-id span {display:inline;margin:0}.section-head h2 {font-size:30px}.section-lead {font-size:13px}.inset {margin-left:0}
+      .requirement-row {grid-template-columns:26px 1fr auto;gap:10px 14px;padding:22px 0}.requirement-row p {grid-column:2 / 4;grid-row:2;font-size:12px}.requirement-row .tag {grid-column:3;grid-row:1}.requirement-row h3 {font-size:14px}
+      .record-header {padding:22px;flex-wrap:wrap}.record-content {grid-template-columns:1fr 1fr}.record-main {padding:24px 22px}.evidence-side {padding:24px 22px}.record-value {font-size:26px}.record-foot {padding:17px 22px}.field-list div {grid-template-columns:66px 1fr;gap:10px}
+      .foundation {gap:18px}.foundation h3 {font-size:23px}.foundation .panel {padding:26px}.route {gap:10px}.route-step {padding:22px 18px}
+      .phase-layout {grid-template-columns:1fr;gap:28px}.phase-aside {padding:0;display:grid;grid-template-columns:155px 1fr;gap:4px 28px}.phase-aside .big-number {grid-row:1/3;font-size:58px}.phase-aside h3 {margin:0;align-self:end}.phase-aside p {font-size:11px}.phase-aside .big-number span {display:block;margin:3px 0 0}
+      .prediction-thesis {padding:28px}.prediction-thesis h3 {font-size:26px}.prediction-steps {padding:8px 26px}.closing {padding:26px}
+    }
+    @media (max-width:550px) {
+      .wrap {width:calc(100% - 36px)}.brand {gap:9px}.brand-sub {letter-spacing:.09em}.edition {letter-spacing:.04em}
+      .nav-actions {gap:2px}.button.compact {font-size:10px;padding-left:12px;gap:6px}.button.compact .button-icon {width:25px;height:25px}.nav-label {font-size:10px;gap:7px}
+      .reading-nav {gap:5px;padding:7px 8px 7px 17px}.icon-button {height:33px;width:33px}.nav-holder {width:calc(100% - 24px)}
+      .hero {padding-top:52px;gap:38px}.hero h1 {font-size:39px;line-height:1.42}.hero-subtitle {font-size:15px;letter-spacing:0}.hero-copy {font-size:13px}.hero-actions {gap:18px}.button {font-size:12px}
+      .art-header {padding:20px 20px 0;font-size:9px}.art-graphic {padding:14px 12px 4px}.art-caption {padding:0 20px 22px}.art-caption b {font-size:19px}.art-caption p {font-size:10px}.art-stamp {font-size:8px}
+      .section-head h2 {font-size:28px}.section-lead {line-height:2}.requirement-row {column-gap:11px}.requirement-row h3 {font-size:13px}.tag {font-size:9px;padding:4px 8px}
+      .record-header {padding:20px;gap:16px}.record-header h3 {font-size:15px}.segmented {width:100%}.segmented button {flex:1}.record-content {grid-template-columns:1fr}.record-main {border-right:0;border-bottom:1px solid var(--hair);padding:24px 20px}.record-value {font-size:29px}.evidence-side {padding:26px 20px}.record-foot {padding:17px 20px}
+      .relation-chain {display:grid;grid-template-columns:repeat(4,minmax(0,1fr) 10px) minmax(0,1fr);gap:4px;align-items:start}.relation-chain .chain-item {font-size:10px;overflow-wrap:anywhere}.relation-chain .chain-item span {font-size:7px;letter-spacing:.035em}.relation-chain .chain-arrow {font-size:10px;padding-top:2px}
+      .foundation {grid-template-columns:1fr;gap:16px}.foundation .panel {padding:28px}.design-rule {gap:10px;font-size:11px}
+      .route {grid-template-columns:1fr;gap:9px}.route-step {padding:22px 24px}.route-arrow {justify-self:center;transform:rotate(90deg);font-size:12px}.route-step b {margin:6px 0}.route-outcome {display:block;padding:20px 23px}.route-outcome span:last-child {display:block;text-align:left;margin-top:7px}
+      .phase-aside {grid-template-columns:1fr;gap:9px}.phase-aside .big-number {grid-row:auto;font-size:61px}.phase-aside .big-number span {display:inline;margin-left:10px}.phase-aside h3 {margin:0}.phase summary {grid-template-columns:25px 1fr 12px;gap:10px;padding:19px 17px}.phase summary b {font-size:13px}.phase summary .effort {grid-column:2;grid-row:2}.phase summary .chevron {grid-column:3;grid-row:1}.phase-body {padding:0 19px 25px 52px}
+      .capability-table {display:block}.capability-table colgroup,.capability-table thead {display:none}.capability-table tbody {display:block}.capability-table tr {display:block;border-top:1px solid var(--hair);padding:20px 0}.capability-table tr:last-child {border-bottom:1px solid var(--hair)}.capability-table td {display:block;padding:0;border:0;margin-bottom:10px}.capability-table td:first-child {font-size:14px;margin-bottom:13px}.capability-table td:nth-child(2)::before {content:"计划做法";display:block;font-size:9px;color:var(--sage);letter-spacing:.08em;margin-bottom:4px}.capability-table td:last-child::before {content:"实现边界";display:block;font-size:9px;color:var(--clay);letter-spacing:.08em;margin-bottom:4px}
+      .tools {grid-template-columns:1fr;gap:14px}.tool-inner {min-height:auto;padding:23px}.tool-name {font-size:16px}
+      .prediction-inner {grid-template-columns:1fr}.prediction-thesis {padding:30px;gap:20px}.prediction-thesis h3 {font-size:28px}.prediction-steps {padding:6px 25px}.prediction-step {gap:9px}
+      .sample-checks {grid-template-columns:1fr;gap:0}.closing {display:block;padding:25px}.closing h3 {font-size:22px}.closing a {margin-top:20px}.sources {grid-template-columns:1fr;gap:11px}.report-footer {display:block;padding-top:26px}.report-footer .footer-status {text-align:left;margin-top:16px}
+    }
+    @media (prefers-reduced-motion:reduce) {
+      html {scroll-behavior:auto}*,*::before,*::after {animation:none!important;transition:none!important}
+      .motion .reveal {opacity:1;transform:none}
+    }
+    @page {size:A4;margin:16mm 15mm 17mm}
+    @media print {
+      :root,html[data-theme="dark"] {--paper:#fff;--surface:#fff;--soft:#f2f3ed;--ink:#273428;--muted:#5f685d;--faint:#7c8779;--sage:#435e45;--sage-soft:#edf2e7;--clay:#945037;--clay-soft:#f7ebe3;--hair:rgba(67,94,69,.23);--white:#fff}
+      body {font-size:10pt;line-height:1.7;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      body::before,.nav-holder,.hero-actions,.closing>a,.theme-toggle,.no-print {display:none!important}
+      .wrap {width:100%;max-width:none}.masthead {padding:0 0 22px}.edition {font-size:8pt}
+      .hero {padding:24px 0 30px;gap:25px;grid-template-columns:1.1fr 1fr}.hero h1 {font-size:30pt}.hero-subtitle {font-size:12pt}.hero-copy {font-size:9pt;line-height:1.85;margin-top:13px}.hero .eyebrow {font-size:7pt;margin-bottom:18px}
+      .bezel,.phase,.tool,.prediction {box-shadow:none}.art-header {padding:16px 18px 0;font-size:6pt}.art-graphic {padding:12px 12px 0}.art-caption {padding:0 18px 18px}.art-caption b {font-size:14pt}.art-caption p {font-size:7pt}.art-stamp {font-size:6pt}
+      .verdict {padding:20px 0;gap:20px}.verdict-label {width:95px;font-size:8pt}.verdict p {font-size:9pt}
+      .report-section {padding:34px 0;break-inside:auto}.section-head {grid-template-columns:84px 1fr;gap:20px;margin-bottom:22px;break-inside:avoid;break-after:avoid-page}.section-id {font-size:8pt;padding-top:7px}.section-id span {font-size:6pt}.section-head h2 {font-size:22pt}.section-lead {font-size:9pt;line-height:1.85;margin-top:10px}.inset {margin-left:0}
+      #roadmap,#opensource,#next {break-inside:avoid}
+      .requirement-row {padding:15px 0;gap:12px;grid-template-columns:25px 1fr 1.3fr 70px;break-inside:avoid}.requirement-row h3 {font-size:10pt}.requirement-row p {font-size:8pt}.tag {font-size:7pt}.aside-note,.ownership-note {font-size:8pt;line-height:1.8}
+      .record-shell,.foundation,.route,.phase,.tool,.prediction,.sample-check,.closing {break-inside:avoid}
+      .record-header {padding:18px 22px}.record-header .label {font-size:8pt}.record-header h3 {font-size:11pt}.segmented button {min-height:28px;font-size:8pt;padding:4px 12px}.record-main,.evidence-side {padding:23px}.record-value {font-size:23pt}.record-unit {font-size:9pt}.field-list div {font-size:8pt;padding:7px 0}.evidence-title {font-size:16pt}.evidence-copy,.evidence-line {font-size:8pt}.evidence-line small {font-size:7pt}.record-foot {font-size:7pt;padding:13px 22px}.relation-chain .chain-item {font-size:8pt}.chain-item span {font-size:6pt}
+      .foundation {gap:16px}.foundation .panel {padding:24px}.foundation h3 {font-size:18pt;margin:10px 0 15px}.feature-item {font-size:9pt;padding-block:9px}.feature-item small {font-size:8pt}.feature-item::before {top:18px}.design-rule {font-size:8pt;margin-top:20px}
+      .route {gap:12px}.route-step {padding:20px}.route-step b {font-size:10pt}.route-step p {font-size:8pt}.route-outcome {font-size:9pt;padding:16px 22px}.route-outcome span:last-child {font-size:8pt}
+      .phase-layout {grid-template-columns:1fr;gap:24px}.phase-aside {display:grid;grid-template-columns:140px 1fr;gap:5px 25px}.phase-aside .big-number {grid-row:1/3;font-size:44pt}.phase-aside .big-number span {display:block;font-size:8pt;margin:4px 0 0}.phase-aside h3 {margin:0;font-size:11pt;align-self:end}.phase-aside p {font-size:8pt}.phase summary {padding:18px;grid-template-columns:30px 1fr auto 12px}.phase summary b {font-size:10pt}.phase summary .effort {font-size:8pt}.phase-body {padding:0 22px 20px 62px}.phase-body p {font-size:8pt;margin-bottom:10px}.phase-deliverable {font-size:8pt}.phase-conditions {font-size:7pt!important}.effort-note {font-size:8pt;margin-top:18px}
+      .capability-table th {font-size:7pt;padding-bottom:11px}.capability-table td {font-size:8pt;padding:14px 20px 14px 0}.capability-table td small {font-size:7pt}
+      .tools {gap:13px}.tool-inner {padding:20px;min-height:140px}.tool-name {font-size:12pt}.tool-description {font-size:8pt;line-height:1.85;margin:10px 0}.tool-meta span {font-size:6pt}.tool-heading a {display:none}.extra-tools summary {font-size:9pt;cursor:default}.extra-tools li {font-size:8pt;padding:9px 0}
+      .prediction-thesis {padding:28px}.prediction-thesis h3 {font-size:22pt}.prediction-thesis p {font-size:8pt}.prediction-steps {padding:5px 25px}.prediction-step {padding:18px 0}.prediction-step b {font-size:9pt}.prediction-step p {font-size:8pt}
+      .sample-check {padding:17px 0}.sample-check b {font-size:10pt}.sample-check p {font-size:8pt}.closing {padding:22px;margin-top:25px}.closing h3 {font-size:17pt}.closing p {font-size:8pt}.sources {font-size:7pt;gap:10px 24px;margin-top:25px}.report-footer {padding:22px 0 0;font-size:7pt}.report-footer .footer-brand {font-size:8pt}
+      .motion .reveal,.reveal {opacity:1!important;transform:none!important;transition:none!important}p,li {orphans:3;widows:3}
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M6 18 18 6M6 6h12v12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-print" viewBox="0 0 24 24"><path d="M7 8V3h10v5M7 16H4V8h16v8h-3M7 13h10v8H7zM17 11h.01" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="m7 9 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 14 4-4m-5-3 2-2a4.24 4.24 0 0 1 6 6l-2 2m0 4-2 2a4.24 4.24 0 0 1-6-6l2-2" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m3 8 9-5 9 5-9 5-9-5Zm0 5 9 5 9-5M3 18l9 5 9-5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    </defs>
+  </svg>
+
+  <header class="masthead wrap" id="top">
+    <a class="brand" href="#top" aria-label="RAG Workbench 方案报告首页">
+      <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="M5 6h11v24H5zM20 6h11v24H20zM9 11h3M9 15h3M24 11h3M24 15h3M18 3v30" stroke="currentColor" stroke-width="1.15" fill="none" stroke-linecap="round"/></svg>
+      <span class="brand-name">RAG Workbench<span class="brand-sub">RESEARCH &amp; DEVELOPMENT NOTE</span></span>
+    </a>
+    <div class="edition"><b>方案讨论稿 · V1</b><time datetime="2026-11-02">2026.11.02</time></div>
+  </header>
+
+  <div class="nav-holder no-print">
+    <nav class="reading-nav" aria-label="报告目录">
+      <span class="nav-label"><i class="dot" aria-hidden="true"></i>有机半导体 · 方案报告</span>
+      <div class="nav-links">
+        <a href="#requirements">需求回应</a><a href="#records">数据与证据</a><a href="#roadmap">实施路径</a><a href="#opensource">开源复用</a><a href="#prediction">性能预测</a>
+      </div>
+      <div class="nav-actions">
+        <button class="icon-button theme-toggle" type="button" aria-label="切换至深色阅读" title="切换阅读主题">
+          <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.2A8.6 8.6 0 0 1 9.8 4a8.6 8.6 0 1 0 10.2 10.2Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/></svg>
+          <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+        </button>
+        <button class="button compact print-button" type="button"><span>打印 / PDF</span><span class="button-icon"><svg aria-hidden="true"><use href="#i-print"/></svg></span></button>
+        <button class="icon-button menu-button" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="展开报告目录"><span class="menu-line"></span><span class="menu-line"></span></button>
+      </div>
+    </nav>
+    <div class="mobile-menu" id="mobile-menu" hidden>
+      <a href="#requirements">01 / 需求回应</a><a href="#records">02 / 数据与证据</a><a href="#roadmap">03 / 实施路径</a><a href="#opensource">04 / 开源复用</a><a href="#prediction">05 / 性能预测</a>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-text reveal">
+        <div class="eyebrow">Organic Semiconductor · Literature Intelligence</div>
+        <h1 id="hero-title">从论文，走向<br><em>有依据的数据。</em></h1>
+        <p class="hero-subtitle">有机半导体文献数据工作台</p>
+        <p class="hero-copy">把材料性能与分子结构、器件结构、制备工艺、测试条件及原文证据一起保存。从一篇可核对的论文开始，逐步建立可分析、可用于预测的数据基础。</p>
+        <div class="hero-actions"><a class="button" href="#roadmap"><span>查看首版交付</span><span class="button-icon"><svg aria-hidden="true"><use href="#i-arrow"/></svg></span></a><a class="text-link" href="#requirements">先看需求回应<svg aria-hidden="true"><use href="#i-down"/></svg></a></div>
+      </div>
+      <div class="hero-art bezel reveal">
+        <div class="panel">
+          <div class="art-header"><span><i class="dot" aria-hidden="true"></i>CONTEXT MATTERS</span><span>概念关系示意</span></div>
+          <div class="art-graphic">
+            <svg viewBox="0 0 440 305" role="img" aria-label="从文献中的材料、工艺与测试条件关联成可追溯实验记录的概念示意">
+              <path d="M45 49h350M45 92h350M45 135h350M45 178h350M45 221h350M45 264h350" stroke="var(--hair)" stroke-width=".6" stroke-dasharray="2 7"/>
+              <path d="M69 35v238M129 35v238M189 35v238M249 35v238M309 35v238M369 35v238" stroke="var(--hair)" stroke-width=".6" stroke-dasharray="2 7"/>
+              <g transform="translate(29,47)">
+                <path d="M6 1h103l22 22v147H6Z" fill="var(--white)" stroke="var(--hair)" stroke-width="1.1"/>
+                <path d="M109 1v22h22" stroke="var(--hair)" stroke-width="1" fill="none"/>
+                <text x="22" y="32" font-family="var(--mono)" font-size="9" fill="var(--sage)">PAPER / PDF</text>
+                <path d="M22 47h69M22 55h82M22 63h72" stroke="var(--muted)" stroke-width="1.4" opacity=".35"/>
+                <rect x="19" y="78" width="96" height="38" rx="4" fill="var(--sage-soft)"/>
+                <path d="M26 89h78M26 99h68M26 108h74" stroke="var(--sage)" stroke-width="1.3" opacity=".7"/>
+                <path d="M22 131h79M22 139h71M22 147h81" stroke="var(--muted)" stroke-width="1.4" opacity=".35"/>
+              </g>
+              <g fill="none" stroke="var(--sage)" stroke-width="1.1">
+                <path d="M146 145h38q13 0 13-13v-35q0-13 13-13h18"/>
+                <path d="M146 145h65q12 0 12 12v18q0 12 12 12h14"/>
+                <circle cx="146" cy="145" r="3.5" fill="var(--surface)"/><circle cx="228" cy="84" r="3.5" fill="var(--surface)"/>
+              </g>
+              <g transform="translate(232,55)">
+                <rect x="0" y="0" width="160" height="58" rx="12" fill="var(--sage-soft)"/>
+                <text x="16" y="25" font-family="var(--sans)" font-size="11" fill="var(--sage)">材料 / 样品</text>
+                <text x="16" y="42" font-family="var(--sans)" font-size="9" fill="var(--sage)" opacity=".7">结构 · 配方 · 文内编号</text>
+              </g>
+              <g transform="translate(250,156)">
+                <rect x="0" y="0" width="160" height="61" rx="12" fill="var(--clay-soft)"/>
+                <text x="16" y="26" font-family="var(--sans)" font-size="11" fill="var(--clay)">性能 / 测试</text>
+                <text x="16" y="44" font-family="var(--sans)" font-size="9" fill="var(--clay)" opacity=".8">数值 · 方法 · 实验条件</text>
+              </g>
+              <path d="M312 115v23q0 10 10 10h8v7M321 148l7 5 7-5" fill="none" stroke="var(--clay)" stroke-width="1"/>
+              <path d="M250 187h-27q-10 0-10 10v36q0 10 10 10h107v-26" fill="none" stroke="var(--clay)" stroke-width="1" stroke-dasharray="3 4"/>
+              <rect x="224" y="232" width="112" height="24" rx="12" fill="var(--surface)"/>
+              <text x="235" y="248" font-family="var(--sans)" font-size="9" fill="var(--muted)">每个字段，都有出处</text>
+              <text x="36" y="266" font-family="var(--mono)" font-size="8" fill="var(--faint)">SOURCE → RECORD → EVIDENCE</text>
+            </svg>
+          </div>
+          <div class="art-caption"><div><b>保留数值背后的实验。</b><p>从可追溯提取，到结构化数据积累。</p></div><span class="art-stamp">RESEARCH<br>PLAN / 01</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="verdict reveal"><div class="verdict-label">可行性判断 / FEASIBILITY</div><p>可以在现有 RAG Workbench 上继续开发。建议<strong>先完成文献提取、人工核验与数据导出</strong>，再按真实数据的覆盖程度，独立验证性能预测能力。</p></div>
+
+    <section class="report-section" id="requirements" aria-labelledby="requirements-title">
+      <div class="section-head reveal"><div class="section-id">01<span>THE REQUEST</span></div><div><h2 id="requirements-title">这些需求，怎样落地？</h2><p class="section-lead">以有机半导体为方向，优先选定一种器件和 2–3 个关键指标。每一项能力都有明确交付内容与验收边界。</p></div></div>
+      <div class="inset reveal">
+        <div class="requirement-row"><span class="row-number">01</span><h3>提取论文中的性能数据</h3><p>从正文与普通表格中提取性能、单位、样品标识和测量方法，生成待核对记录。</p><span class="tag">首版重点</span></div>
+        <div class="requirement-row"><span class="row-number">02</span><h3>带上工艺、条件与结构</h3><p>将每个数值关联到对应样品、制备过程、器件结构和测试环境，保存多处原文证据。</p><span class="tag">首版重点</span></div>
+        <div class="requirement-row"><span class="row-number">03</span><h3>保存数据，导出 CSV</h3><p>页面支持查阅、修订和审核；性能表可直接导出，完整数据包保留结构与关联关系。</p><span class="tag">首版重点</span></div>
+        <div class="requirement-row"><span class="row-number">04</span><h3>处理图表与结构图片</h3><p>表格解析优先；曲线通过坐标校准辅助读数，分子和器件示意图分类型识别与确认。</p><span class="tag neutral">逐步增强</span></div>
+        <div class="requirement-row"><span class="row-number">05</span><h3>分析数据，预测新情况</h3><p>先比较条件一致的实验、检索相似案例；数据准备充分后，训练并评估专门的预测模型。</p><span class="tag clay">条件成熟后</span></div>
+        <p class="aside-note">目前已确认领域方向为“有机半导体”。OFET、OPV 或其他器件，以及具体性能指标，仍需用实际论文确定。本报告描述拟建设能力，尚未进行真实论文提取。</p>
+      </div>
+    </section>
+
+    <section class="report-section" id="records" aria-labelledby="records-title">
+      <div class="section-head reveal"><div class="section-id">02<span>DATA &amp; EVIDENCE</span></div><div><h2 id="records-title">一条数据，要带着完整上下文。</h2><p class="section-lead">记录的基本单位是“某个样品或器件，在某种测试方法和条件下的一项观测”。同一种材料的不同工艺、不同测试应分别保存。</p></div></div>
+      <div class="inset">
+        <div class="record-shell bezel reveal">
+          <div class="panel">
+            <div class="record-header"><div><div class="label">字段结构示意 · 无实际实验数据</div><h3>一项性能记录，会包含什么？</h3></div><div class="segmented" role="tablist" aria-label="选择器件字段示例"><button id="tab-ofet" role="tab" type="button" data-domain="ofet" aria-selected="true" aria-controls="domain-panel" tabindex="0">OFET</button><button id="tab-opv" role="tab" type="button" data-domain="opv" aria-selected="false" aria-controls="domain-panel" tabindex="-1">OPV</button></div></div>
+            <div class="record-content" id="domain-panel" role="tabpanel" aria-labelledby="tab-ofet" tabindex="0">
+              <div class="record-main"><div class="record-type"><span id="domain-name">有机场效应晶体管</span><span class="tag neutral">待原文核对</span></div><div class="record-value" id="property-name">载流子迁移率</div><div class="record-unit" id="property-unit">数值待提取 · 参考单位 cm²·V⁻¹·s⁻¹</div><dl class="field-list"><div><dt>材料结构</dt><dd id="field-material">分子结构 / 聚合物重复单元</dd></div><div><dt>样品与器件</dt><dd id="field-device">样品编号、层次与沟道几何</dd></div><div><dt>制备工艺</dt><dd id="field-process">溶剂、沉积、退火和气氛</dd></div><div><dt>测试方法</dt><dd id="field-method">电子 / 空穴；线性 / 饱和区</dd></div><div><dt>测试条件</dt><dd id="field-conditions">偏压、温度、环境与提取方法</dd></div></dl></div>
+              <div class="evidence-side"><div class="evidence-kicker">EVIDENCE FIRST</div><h4 class="evidence-title">数值与条件可能来自<br>论文的不同位置。</h4><p class="evidence-copy">例如，数值在表格里，退火条件在方法段落里，器件层次在示意图中。系统需要把这些证据关联到同一个样品。</p><div class="evidence-line"><svg aria-hidden="true"><use href="#i-file"/></svg><div>精确回到原文<small>原始文件、页码、段落或单元格</small></div></div><div class="evidence-line"><svg aria-hidden="true"><use href="#i-layers"/></svg><div>结构保留原始依据<small>原图与确认后的结构同时保存</small></div></div><div class="evidence-line"><svg aria-hidden="true"><use href="#i-link"/></svg><div>人工修订有记录<small>保留抽取候选、修改与审核版本</small></div></div></div>
+            </div>
+            <div class="record-foot">示意说明：以上为拟设计的字段模板，不是论文提取结果。未报告或无法确认的字段留空，并记录原因。</div>
+          </div>
+        </div>
+        <div class="relation-chain reveal" aria-label="数据关系：材料、样品、工艺、器件、测试、证据"><div class="chain-item">材料<span>MATERIAL</span></div><span class="chain-arrow" aria-hidden="true">→</span><div class="chain-item">样品 / 工艺<span>SAMPLE &amp; PROCESS</span></div><span class="chain-arrow" aria-hidden="true">→</span><div class="chain-item">器件<span>DEVICE</span></div><span class="chain-arrow" aria-hidden="true">→</span><div class="chain-item">性能 / 条件<span>MEASUREMENT</span></div><span class="chain-arrow" aria-hidden="true">→</span><div class="chain-item">原文证据<span>EVIDENCE</span></div></div>
+      </div>
+    </section>
+
+    <section class="report-section" id="foundation" aria-labelledby="foundation-title">
+      <div class="section-head reveal"><div class="section-id">03<span>BUILD ON WHAT EXISTS</span></div><div><h2 id="foundation-title">沿着已有基础，补齐材料数据能力。</h2><p class="section-lead">保留现有本地工作台，新增“材料文献”入口与专用数据层。问答帮助找依据，结构化记录支持筛选、分析和后续建模。</p></div></div>
+      <div class="inset">
+        <div class="foundation reveal"><div class="bezel"><div class="panel"><span class="tag">已有 · 可复用</span><h3>文献与问答工作台</h3><ul><li class="feature-item">文档导入与原件管理<small>沿用已有文件管理和去重基础</small></li><li class="feature-item">检索、问答与来源追踪<small>围绕文献与审核记录查询依据</small></li><li class="feature-item">本地页面和桌面入口<small>延续主题、导航和使用方式</small></li><li class="feature-item">人工审核与版本管理思路<small>扩展到材料字段和实验关系</small></li></ul></div></div><div class="bezel new"><div class="panel"><span class="tag clay">新增 · 本轮建设</span><h3>实验数据与证据层</h3><ul><li class="feature-item">研究文献解析与提取<small>正文、表格、图像及页内定位</small></li><li class="feature-item">材料—样品—器件—测试关系<small>区分工艺、测量口径和统计方式</small></li><li class="feature-item">审核、筛选与完整导出<small>CSV 便于使用，结构化包保留关联</small></li><li class="feature-item">训练数据和模型评估<small>满足数据条件后再加入预测流程</small></li></ul></div></div></div>
+        <div class="design-rule reveal"><svg aria-hidden="true"><use href="#i-link"/></svg><p>材料数据独立存储，现有问答库作为可重建的查询入口。原文、审核记录和数据版本形成稳定链路，重新建立检索索引也能保留证据。</p></div>
+        <div class="route reveal" aria-label="建议处理路线"><div class="route-step"><span class="route-index">STEP 01</span><b>解析整篇文献</b><p>读取正文与补充材料，保留版面、表格和图片位置。</p></div><span class="route-arrow" aria-hidden="true">→</span><div class="route-step"><span class="route-index">STEP 02</span><b>抽取并关联实验</b><p>识别材料、样品、工艺和测试，校验单位与字段关系。</p></div><span class="route-arrow" aria-hidden="true">→</span><div class="route-step"><span class="route-index">STEP 03</span><b>核对后形成数据</b><p>人工确认，保存修订；生成可追溯记录与可下载文件。</p></div></div>
+        <div class="route-outcome reveal"><span>输出：已审核记录 + 原文证据 + CSV / 完整数据包</span><span>抽取遍历相关内容，不能只依赖一次问答的少量检索片段。</span></div>
+      </div>
+    </section>
+
+    <section class="report-section" id="roadmap" aria-labelledby="roadmap-title">
+      <div class="section-head reveal"><div class="section-id">04<span>DELIVERY ROADMAP</span></div><div><h2 id="roadmap-title">先交付一篇，再扩大能力。</h2><p class="section-lead">每一步都有可展示、可核对的产物。先确认单篇论文能否被正确整理，再推进批量化、复杂图表与模型验证。</p></div></div>
+      <div class="inset">
+        <div class="phase-layout reveal"><aside class="phase-aside"><div class="big-number">6–10<span>工程人日 · 首版估算</span></div><h3>首个验收：一篇真实论文</h3><p>选择器件方向与关键指标，导入 PDF，检查提取记录和证据，在页面修订并导出数据。</p></aside><div class="phase-accordions">
+          <div class="phase"><details class="phase-inner" open><summary><span class="phase-number">01</span><b>单篇论文端到端演示</b><span class="effort">M0 + M1 · 6–10 人日</span><svg class="chevron" aria-hidden="true"><use href="#i-down"/></svg></summary><div class="phase-body"><p>用实际 PDF 确定字段；完成正文和普通表格抽取，提供材料/器件信息、工艺与测试条件。结构先保留原图，支持人工确认。</p><div class="phase-deliverable">交付：一篇可逐项核对的论文记录、审核页面、证据定位、CSV / JSON。</div><p class="phase-conditions">扫描件和图中独有数据按需加入辅助处理；自动提取与人工补充明确区分。</p></div></details></div>
+          <div class="phase"><details class="phase-inner"><summary><span class="phase-number">02</span><b>多篇文献与数据管理</b><span class="effort">M2 · 4–7 人日</span><svg class="chevron" aria-hidden="true"><use href="#i-down"/></svg></summary><div class="phase-body"><p>处理多论文与补充材料，管理样品、别名、配方及单位。加入批量任务、失败重试、冲突记录和条件筛选。</p><div class="phase-deliverable">交付：多篇文献数据集、审核版本、可比实验分析、可回读的完整数据包。</div><p class="phase-conditions">重复导入不重复记账，重跑抽取不覆盖人工修订。</p></div></details></div>
+          <div class="phase"><details class="phase-inner"><summary><span class="phase-number">03</span><b>图表与分子结构增强</b><span class="effort">M3 · 5–10 人日</span><svg class="chevron" aria-hidden="true"><use href="#i-down"/></svg></summary><div class="phase-body"><p>接入曲线校准读数结果，保存原图与校准信息。试验小分子图片识别、复杂表格及图文指代关联。</p><div class="phase-deliverable">交付：选定图类型的读数和误差记录、原图与结构核对、结构化曲线数据。</div><p class="phase-conditions">聚合物、R 基及复杂形貌图单独确认支持范围，不一次承诺全图种自动化。</p></div></details></div>
+          <div class="phase"><details class="phase-inner"><summary><span class="phase-number">04</span><b>性能预测与独立验证</b><span class="effort">M4 · 5–10 人日*</span><svg class="chevron" aria-hidden="true"><use href="#i-down"/></svg></summary><div class="phase-body"><p>选定一个定义明确的预测目标，整理结构和实验特征，训练简单基线并进行独立测试。展示误差、相似实验与适用范围。</p><div class="phase-deliverable">交付：数据快照、基线比较、测试报告；达标后开放预测页面。</div><p class="phase-conditions">* 数据达到准入条件后才启动，不包含数据积累、人工标注和补充实验时间。</p></div></details></div>
+        </div></div>
+        <p class="effort-note">估算前提：1 名熟悉项目的开发者，需求方提供典型论文并及时核对。以上为工程投入范围，不是日历交付承诺；模型环境、论文复杂度和字段范围明确后重新估算。</p>
+      </div>
+    </section>
+
+    <section class="report-section" id="figures" aria-labelledby="figures-title">
+      <div class="section-head reveal"><div class="section-id">05<span>FIGURES &amp; STRUCTURES</span></div><div><h2 id="figures-title">不同的图，需要不同的处理方法。</h2><p class="section-lead">“看懂图的含义”与“恢复图中的数值”是两项能力。先确定图类型、坐标和样品对应，再保存读数与误差。</p></div></div>
+      <div class="inset reveal"><table class="capability-table"><caption class="sr-only">不同论文内容的处理路线与能力边界</caption><colgroup><col><col><col></colgroup><thead><tr><th scope="col">论文内容</th><th scope="col">计划做法</th><th scope="col">实现边界</th></tr></thead><tbody>
+        <tr><td>正文与普通表格<small>首版优先</small></td><td>提取字段，关联表头、单位、脚注和样品编号。</td><td>跨页表格、多级表头和扫描表格需单独核验。</td></tr>
+        <tr><td>折线、散点和器件曲线<small>辅助数字化</small></td><td>坐标轴标定、曲线/图例对应，保留原图、工程信息与数值。</td><td>读数属于近似；线性/对数轴、扫描方向和误差条要分清。</td></tr>
+        <tr><td>分子与聚合物结构<small>原图 + 确认结果</small></td><td>小分子可用图片识别辅助转结构；聚合物保存重复单元和连接信息。</td><td>R 基、配方、聚合物不强行合并成一个确定的小分子结构。</td></tr>
+        <tr><td>器件结构示意图<small>层次与电极关系</small></td><td>提取材料层次、厚度和电极关系，展示可修改的结构示意。</td><td>与正文和图注共同核对，未知尺寸留空。</td></tr>
+        <tr><td>AFM / SEM / GIWAXS 等<small>先保留证据</small></td><td>保留图片、图注和论文已报告的形貌或晶体参数。</td><td>从任意图自动计算新参数，需要另设专业分析任务。</td></tr>
+      </tbody></table><p class="aside-note">作者报告值、图上读数、按公式计算值与模型预测值分别标识。若从曲线计算新参数，需保存公式、输入、拟合范围和假设。</p></div>
+    </section>
+
+    <section class="report-section" id="opensource" aria-labelledby="opensource-title">
+      <div class="section-head reveal"><div class="section-id">06<span>OPEN SOURCE, PURPOSEFULLY</span></div><div><h2 id="opensource-title">成熟能力，优先复用。</h2><p class="section-lead">将开源工具接在可替换的接口后，优先复用文档解析、来源对齐、化学结构和曲线数字化。用小批真实论文验证后，再确定最终组合。</p></div></div>
+      <div class="inset">
+        <div class="tools reveal">
+          <article class="tool"><div class="tool-inner"><div class="tool-heading"><h3 class="tool-name">Docling</h3><a href="https://github.com/docling-project/docling" target="_blank" rel="noopener noreferrer" aria-label="查看 Docling 官方仓库"><svg aria-hidden="true"><use href="#i-arrow"/></svg></a></div><p class="tool-description">解析 PDF 的版面、表格和图片，保留结构及位置，作为原文证据定位的基础。</p><div class="tool-meta"><span>优先候选 · 文献解析</span><span>代码 MIT</span></div></div></article>
+          <article class="tool"><div class="tool-inner"><div class="tool-heading"><h3 class="tool-name">LangExtract</h3><a href="https://github.com/google/langextract" target="_blank" rel="noopener noreferrer" aria-label="查看 LangExtract 官方仓库"><svg aria-hidden="true"><use href="#i-arrow"/></svg></a></div><p class="tool-description">按字段和示例提取文本信息，并对齐原文位置；领域关系和证据有效性仍需校验。</p><div class="tool-meta"><span>优先候选 · 文本抽取</span><span>Apache-2.0</span></div></div></article>
+          <article class="tool"><div class="tool-inner"><div class="tool-heading"><h3 class="tool-name">RDKit + Pint</h3><a href="https://github.com/rdkit/rdkit" target="_blank" rel="noopener noreferrer" aria-label="查看 RDKit 官方仓库"><svg aria-hidden="true"><use href="#i-arrow"/></svg></a></div><p class="tool-description">分别负责分子结构处理、描述符和单位换算，为结构核验及后续建模提供基础。</p><div class="tool-meta"><span>结构与量纲</span><span>BSD 系列许可</span></div></div></article>
+          <article class="tool"><div class="tool-inner"><div class="tool-heading"><h3 class="tool-name">WebPlotDigitizer</h3><a href="https://automeris.io/docs/digitize/" target="_blank" rel="noopener noreferrer" aria-label="查看 WebPlotDigitizer 官方操作说明"><svg aria-hidden="true"><use href="#i-arrow"/></svg></a></div><p class="tool-description">坐标标定与辅助读数先使用独立本地工具，再导入曲线和校准结果，保留人工核对。</p><div class="tool-meta"><span>曲线数字化</span><span>开源前端 AGPL-3.0</span></div></div></article>
+        </div>
+        <details class="extra-tools reveal"><summary><span>进一步可评估的组件与兼容事项</span><svg class="chevron" aria-hidden="true"><use href="#i-down"/></svg></summary><ul>
+          <li><a href="https://github.com/thomas0809/MolScribe" target="_blank" rel="noopener noreferrer">MolScribe</a> / <a href="https://github.com/CrystalEye42/OpenChemIE" target="_blank" rel="noopener noreferrer">OpenChemIE</a>：用于分子图片识别和化学论文图文关联，先验证小分子；聚合物和复杂指代保留人工确认。</li>
+          <li><a href="https://github.com/CambridgeMolecularEngineering/chemdataextractor2" target="_blank" rel="noopener noreferrer">ChemDataExtractor 2</a>：可作为化学实体、性质和表格规则抽取的对照。官方声明 Python 3.9–3.11 支持，与当前主项目 3.12 先做隔离验证。</li>
+          <li><a href="https://github.com/opendatalab/MinerU" target="_blank" rel="noopener noreferrer">MinerU</a>：复杂文献解析的备选，按样本效果决定；采用含附加条件的 MinerU Open Source License。</li>
+          <li><a href="https://github.com/scikit-learn/scikit-learn" target="_blank" rel="noopener noreferrer">scikit-learn</a>：用于预测阶段的简单基线、预处理与评估；复杂模型需证明额外收益。</li>
+        </ul></details>
+        <p class="ownership-note reveal">项目自身重点：材料字段、样品对应、工艺与条件关系、审核修订、完整导出和评测。开源组件的代码、模型权重与数据许可分别核对，集成时锁定版本。选型资料按 2026-11-01 官方仓库整理，尚待本机样本验证。</p>
+      </div>
+    </section>
+
+    <section class="report-section" id="prediction" aria-labelledby="prediction-title">
+      <div class="section-head reveal"><div class="section-id">07<span>PREDICTION, WITH EVIDENCE</span></div><div><h2 id="prediction-title">性能预测，另设一道验收。</h2><p class="section-lead">新材料的性能还会受到配方、加工、器件和测试条件影响。先积累条件可比的数据，再确定模型能回答的具体问题。</p></div></div>
+      <div class="inset">
+        <div class="prediction reveal"><div class="prediction-inner"><div class="prediction-thesis"><h3>先找到相似实验，<br>再检验能否预测。</h3><p>少量论文可以支撑可追溯整理与案例比较。是否能预测新材料，需要看独立数据覆盖与实测误差，不能仅凭总行数判断。</p></div><div class="prediction-steps"><div class="prediction-step"><span class="n">01</span><div><b>明确一个目标</b><p>一种器件、一种测试口径；输入包含已确认的结构及必要工艺条件。</p></div></div><div class="prediction-step"><span class="n">02</span><div><b>先建立基线模型</b><p>与简单均值、线性或树模型比较；同一论文、样品和曲线的重复数据分组处理。</p></div></div><div class="prediction-step"><span class="n">03</span><div><b>用独立数据验证</b><p>针对新材料检查结构分组或时间外推结果，报告误差及预测区间的实际覆盖。</p></div></div><div class="prediction-step"><span class="n">04</span><div><b>显示适用范围</b><p>关键输入缺失或明显超出训练覆盖时，显示信息不足或模型不适用，提供相似案例。</p></div></div></div></div></div>
+        <p class="aside-note reveal">首批方向仍需选定：OFET 可考虑迁移率、阈值电压和开关比；OPV 可考虑 PCE、Voc、Jsc 等。不同测试方法、实验/计算值和最佳/平均值分别管理。</p>
+      </div>
+    </section>
+
+    <section class="report-section" id="next" aria-labelledby="next-title">
+      <div class="section-head reveal"><div class="section-id">08<span>FIRST VALIDATION</span></div><div><h2 id="next-title">拿一篇论文，把第一步做实。</h2><p class="section-lead">第一轮讨论只需把样本、器件方向和目标指标确定下来。随后用实际结果核对可行性，再决定增强图表能力还是扩大数据规模。</p></div></div>
+      <div class="inset">
+        <div class="sample-checks reveal"><div class="sample-check"><span class="check">01</span><div><b>典型论文与补充材料</b><p>提供一篇最有代表性的 PDF 及其 SI；有复杂表格或图中独有数据时，一并标明。</p></div></div><div class="sample-check"><span class="check">02</span><div><b>首批器件和性能</b><p>确定优先做 OFET、OPV 还是其他方向，选最关心的 2–3 个指标。</p></div></div><div class="sample-check"><span class="check">03</span><div><b>需要保留的结构</b><p>确认分子/聚合物结构、器件结构的优先级；两类数据可以共存，自动化程度不同。</p></div></div><div class="sample-check"><span class="check">04</span><div><b>预测时会提供什么</b><p>只有新材料结构，还是还会提供配方、工艺、器件和测试条件，决定预测任务范围。</p></div></div></div>
+        <div class="closing reveal"><div><h3>首版验收：数据能查，条件能对，证据能回看。</h3><p>导入真实论文 → 核对材料与实验记录 → 人工修订 → 页面展示 → CSV 导出。</p></div><a href="#top">回到报告首页<svg aria-hidden="true"><use href="#i-arrow"/></svg></a></div>
+        <div class="sources reveal" aria-label="资料来源"><a href="https://github.com/docling-project/docling/blob/main/docs/concepts/docling_document.md" target="_blank" rel="noopener noreferrer"><span class="source-n">[1]</span><span>Docling · 结构、布局与来源表示</span></a><a href="https://github.com/google/langextract/blob/main/README.md" target="_blank" rel="noopener noreferrer"><span class="source-n">[2]</span><span>LangExtract · 文本抽取与来源对齐</span></a><a href="https://www.nature.com/articles/nmat5035" target="_blank" rel="noopener noreferrer"><span class="source-n">[3]</span><span>FET 迁移率提取的常见问题与建议</span></a><a href="https://www.nature.com/articles/sdata201686" target="_blank" rel="noopener noreferrer"><span class="source-n">[4]</span><span>HOPV15 · 有机光伏实验与计算数据参考</span></a><a href="https://github.com/hgrecco/pint" target="_blank" rel="noopener noreferrer"><span class="source-n">[5]</span><span>Pint · 物理量与单位处理</span></a><a href="https://github.com/automeris-io/WebPlotDigitizer" target="_blank" rel="noopener noreferrer"><span class="source-n">[6]</span><span>WebPlotDigitizer · 开源前端与许可说明</span></a></div>
+      </div>
+    </section>
+  </main>
+  <footer class="report-footer wrap"><div><span class="footer-brand">RAG Workbench · 有机半导体文献数据工作台</span>可行性与分阶段实施建议 / V1 / 2026.11.02</div><p class="footer-status">本报告为方案讨论稿，依据需求说明与本地项目规划编写。字段及关系图为概念示意；实际提取、图表读数和预测效果需由真实论文及独立测试确认。<br>单文件离线可读 · 支持浏览器打印为 PDF</p></footer>
+
+  <script>
+    (() => {
+      'use strict';
+      const root = document.documentElement;
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+      const themeButton = document.querySelector('.theme-toggle');
+      let storedTheme = null;
+      try { storedTheme = localStorage.getItem('materials-report-theme'); } catch (_) {}
+      if (storedTheme === 'dark') root.dataset.theme = 'dark';
+      const updateThemeLabel = () => themeButton.setAttribute('aria-label', root.dataset.theme === 'dark' ? '切换至浅色阅读' : '切换至深色阅读');
+      updateThemeLabel();
+      themeButton.addEventListener('click', () => {
+        root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+        updateThemeLabel();
+        try { localStorage.setItem('materials-report-theme', root.dataset.theme); } catch (_) {}
+      });
+
+      const menuButton = document.querySelector('.menu-button');
+      const menu = document.querySelector('#mobile-menu');
+      const closeMenu = () => {
+        menu.hidden = true;
+        menuButton.setAttribute('aria-expanded', 'false');
+        menuButton.setAttribute('aria-label', '展开报告目录');
+      };
+      menuButton.addEventListener('click', () => {
+        const opening = menuButton.getAttribute('aria-expanded') !== 'true';
+        menu.hidden = !opening;
+        menuButton.setAttribute('aria-expanded', String(opening));
+        menuButton.setAttribute('aria-label', opening ? '收起报告目录' : '展开报告目录');
+      });
+      menu.querySelectorAll('a').forEach(link => link.addEventListener('click', closeMenu));
+      document.addEventListener('click', event => {
+        if (!menu.hidden && !event.target.closest('.nav-holder')) closeMenu();
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !menu.hidden) { closeMenu(); menuButton.focus(); }
+      });
+      window.matchMedia('(min-width:801px)').addEventListener('change', event => { if (event.matches) closeMenu(); });
+
+      const domainData = {
+        ofet: {
+          'domain-name':'有机场效应晶体管', 'property-name':'载流子迁移率',
+          'property-unit':'数值待提取 · 参考单位 cm²·V⁻¹·s⁻¹',
+          'field-material':'分子结构 / 聚合物重复单元', 'field-device':'样品编号、层次与沟道几何',
+          'field-process':'溶剂、沉积、退火和气氛', 'field-method':'电子 / 空穴；线性 / 饱和区',
+          'field-conditions':'偏压、温度、环境与提取方法'
+        },
+        opv: {
+          'domain-name':'有机光伏器件', 'property-name':'光电转换效率 PCE',
+          'property-unit':'数值待提取 · 参考单位 %',
+          'field-material':'给体 / 受体结构与混合比例', 'field-device':'样品编号、器件层次与活性层',
+          'field-process':'溶剂、添加剂、成膜和退火', 'field-method':'测试方法；最佳 / 平均值',
+          'field-conditions':'光谱、光照强度、有效面积'
+        }
+      };
+      const tabs = Array.from(document.querySelectorAll('[data-domain]'));
+      function selectDomain(button) {
+        const data = domainData[button.dataset.domain];
+        for (const [id, value] of Object.entries(data)) document.getElementById(id).textContent = value;
+        tabs.forEach(tab => {
+          const selected = tab === button;
+          tab.setAttribute('aria-selected', String(selected));
+          tab.tabIndex = selected ? 0 : -1;
+        });
+        document.getElementById('domain-panel').setAttribute('aria-labelledby', button.id);
+      }
+      tabs.forEach((tab, index) => {
+        tab.addEventListener('click', () => selectDomain(tab));
+        tab.addEventListener('keydown', event => {
+          let next = null;
+          if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') next = (index + 1) % tabs.length;
+          if (event.key === 'Home') next = 0;
+          if (event.key === 'End') next = tabs.length - 1;
+          if (next !== null) { event.preventDefault(); selectDomain(tabs[next]); tabs[next].focus(); }
+        });
+      });
+
+      if ('IntersectionObserver' in window && !reducedMotion.matches) {
+        root.classList.add('motion');
+        const revealObserver = new IntersectionObserver(entries => {
+          entries.forEach(entry => {
+            if (entry.isIntersecting) { entry.target.classList.add('visible'); revealObserver.unobserve(entry.target); }
+          });
+        }, { threshold:.06, rootMargin:'0px 0px 35px 0px' });
+        document.querySelectorAll('.reveal').forEach(node => revealObserver.observe(node));
+      }
+      if ('IntersectionObserver' in window) {
+        const navLinks = Array.from(document.querySelectorAll('.nav-links a'));
+        const navObserver = new IntersectionObserver(entries => {
+          const visible = entries.filter(entry => entry.isIntersecting);
+          if (!visible.length) return;
+          const id = visible[visible.length - 1].target.id;
+          navLinks.forEach(link => {
+            if (link.hash === '#' + id) link.setAttribute('aria-current', 'location');
+            else link.removeAttribute('aria-current');
+          });
+        }, { rootMargin:'-12% 0px -60% 0px', threshold:0 });
+        navLinks.forEach(link => { const section = document.querySelector(link.hash); if (section) navObserver.observe(section); });
+        navObserver.observe(document.querySelector('.hero'));
+      }
+
+      let printDetails = [];
+      window.addEventListener('beforeprint', () => {
+        closeMenu();
+        printDetails = Array.from(document.querySelectorAll('details')).map(node => ({node, open:node.open}));
+        printDetails.forEach(({node}) => { node.open = true; });
+      });
+      window.addEventListener('afterprint', () => {
+        printDetails.forEach(({node, open}) => { node.open = open; });
+        printDetails = [];
+      });
+      document.querySelectorAll('.print-button').forEach(button => button.addEventListener('click', () => window.print()));
+    })();
+  </script>
+</body>
+</html>

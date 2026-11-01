@@ -157,3 +157,125 @@ def test_pending_turn_can_stop_and_new_session_is_independent(settings, monkeypa
         assert len(app.chat_message) == 0
     finally:
         gate.set()
+
+
+def test_sidebar_css_covers_all_five_navigation_icons():
+    from rag_workbench.ui.shell import PAGES
+
+    assert len(PAGES) == 6
+    css = (ROOT / "src" / "rag_workbench" / "ui" / "assets" / "workbench.css").read_text(
+        encoding="utf-8"
+    )
+    for idx in range(1, len(PAGES)):
+        assert f'input[value="{idx}"]' in css
+
+
+def test_pack_builder_form_immediately_refreshes_sidebar_pack_selector(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from rag_workbench.bootstrap import build_services
+    from rag_workbench.config import Settings
+    from rag_workbench.ui import app as ui_app
+    from rag_workbench.ui import pages as ui_pages
+
+    from .fakes import FakeEmbedder, FakeProvider
+
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "active",
+        packs_dir=tmp_path / "packs",
+        packs_data_dir=tmp_path / "data",
+        chunk_size=100,
+        chunk_overlap=10,
+    )
+    services = build_services(settings, embedder=FakeEmbedder(), provider=FakeProvider())
+    monkeypatch.setenv("RAG_PACKS_DIR", str(settings.packs_dir))
+    monkeypatch.setenv("RAG_PACKS_DATA_DIR", str(settings.packs_data_dir))
+    monkeypatch.setattr(ui_app, "load_settings", lambda: settings)
+    monkeypatch.setattr(ui_app, "resources", lambda *args: services)
+    monkeypatch.setattr(
+        ui_pages.st,
+        "file_uploader",
+        lambda *args, **kwargs: [
+            SimpleNamespace(name="doc.txt", getvalue=lambda: "内容。".encode())
+        ],
+    )
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio[0].set_value("知识包").run()
+    assert not app.exception
+    assert len(app.sidebar.selectbox) == 0
+    app.text_input(key="pack_id_input").set_value("fresh-pack")
+    app.text_input(key="pack_title_input").set_value("新建知识包")
+    app.button[0].click().run()
+    assert not app.exception
+    assert len(app.sidebar.selectbox) == 1
+    assert any("新建知识包" in opt for opt in app.sidebar.selectbox[0].options)
+    assert app.session_state["pack_manage_select"] == "fresh-pack"
+
+
+def test_pack_switch_and_return_to_default_workspace_syncs_selector_and_buttons(
+    tmp_path, monkeypatch
+):
+    from rag_workbench.application.packs import PackBuilder, PackSpec
+    from rag_workbench.bootstrap import build_services
+    from rag_workbench.config import Settings
+    from rag_workbench.ui import app as ui_app
+
+    from .fakes import FakeEmbedder, FakeProvider
+
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path / "active",
+        packs_dir=tmp_path / "packs",
+        packs_data_dir=tmp_path / "data",
+        chunk_size=100,
+        chunk_overlap=10,
+    )
+    PackBuilder(settings, FakeEmbedder()).build(
+        PackSpec(
+            pack_id="demo-pack",
+            title="示例知识包",
+            license_status="internal_only",
+            chunk_size=100,
+            chunk_overlap=10,
+            similarity_threshold=0.0,
+        ),
+        [("a.txt", "资料正文。".encode())],
+    )
+    services = build_services(settings, embedder=FakeEmbedder(), provider=FakeProvider())
+    monkeypatch.setenv("RAG_PACKS_DIR", str(settings.packs_dir))
+    monkeypatch.setenv("RAG_PACKS_DATA_DIR", str(settings.packs_data_dir))
+    monkeypatch.setattr(ui_app, "load_settings", lambda: settings)
+    monkeypatch.setattr(ui_app, "resources", lambda *args: services)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio[0].set_value("知识包").run()
+    assert not app.button(key="switch_existing_pack").disabled
+    app.button(key="switch_existing_pack").click().run()
+    assert app.session_state["active_pack"] == "demo-pack"
+    assert app.session_state["active_pack_select"] == "demo-pack"
+    app.sidebar.radio[0].set_value("知识包").run()
+    assert app.button(key="switch_existing_pack").disabled
+    app.button(key="switch_default_workspace").click().run()
+    assert app.session_state["active_pack"] is None
+    assert app.session_state["active_pack_select"] is None
+
+
+def test_debug_page_ignores_whitespace_submission_and_preserves_inspection(settings, monkeypatch):
+    from rag_workbench.bootstrap import build_services
+    from rag_workbench.ui import app as ui_app
+
+    from .fakes import FakeEmbedder, FakeProvider
+
+    services = build_services(settings, embedder=FakeEmbedder(), provider=FakeProvider())
+    services.knowledge.ingest("manual.txt", "资料保管期限为三年。".encode())
+    monkeypatch.setattr(ui_app, "load_settings", lambda: settings)
+    monkeypatch.setattr(ui_app, "resources", lambda *args: services)
+    app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+    app.sidebar.radio[0].set_value("检索调试").run()
+    app.text_area[0].set_value("保管期限？")
+    app.button[0].click().run()
+    assert app.session_state["inspection"].question == "保管期限？"
+    app.text_area[0].set_value("   ")
+    app.button[0].click().run()
+    assert any("请输入" in w.value for w in app.warning)
+    assert app.session_state["inspection"].question == "保管期限？"

@@ -22,7 +22,7 @@ from rag_workbench.infrastructure.embedding import BgeEmbedder
 from rag_workbench.infrastructure.parsing import SUPPORTED_FORMATS_LABEL, UPLOAD_EXTENSIONS
 from rag_workbench.ui.components import inspection_panel
 from rag_workbench.ui.pack_studio import render_pack_studio
-from rag_workbench.ui.shell import activate_pack
+from rag_workbench.ui.shell import _busy, activate_pack
 
 INDEX_LABELS = {
     "ready": "已就绪",
@@ -244,9 +244,7 @@ def _show_build_result(services: Services, result: dict) -> None:
     cols[0].metric("文档", result["stats"]["documents"])
     cols[1].metric("文本块", result["stats"]["chunks"])
     cols[2].metric("被拒绝文件", len(result["failures"]))
-    cols[3].metric("体检失败", sum(
-        check["status"] == "fail" for check in result["lint"]["checks"]
-    ))
+    cols[3].metric("体检失败", sum(check["status"] == "fail" for check in result["lint"]["checks"]))
     st.caption(
         f"知识包目录：{Path(result['pack_dir']).as_posix()} · "
         f"数据目录：{Path(result['data_dir']).as_posix()}"
@@ -275,29 +273,45 @@ def _show_build_result(services: Services, result: dict) -> None:
         + "；这只是索引自洽检查，不是回答准确率验收。"
     )
     cols = st.columns(2)
-    if cols[0].button("切换到该知识包", type="primary", key="switch_built_pack"):
+    already_active = st.session_state.get("active_pack") == result["pack_id"]
+    if cols[0].button(
+        "当前已在该知识包" if already_active else "切换到该知识包",
+        type="primary",
+        key="switch_built_pack",
+        disabled=already_active or _busy(),
+    ):
         activate_pack(result["pack_id"])
     if cols[1].button("关闭结果", key="clear_pack_result"):
         st.session_state.pop("pack_build_result", None)
         st.rerun()
-    st.caption("profile/profile.md 是保守模板；P1 不调用 LLM，也不声称已完成人工审核。")
+    st.caption("初始 Profile 是保守模板；建库不调用远程模型，使用前请人工审核。")
 
 
 def packs_page(services: Services) -> None:
     st.title("知识包")
     st.caption("把资料整理成可追溯、可体检、可切换的草稿知识包。")
     st.info(
-        "建库本身生成确定性草稿；P2 的 profile/评测题起草和在线评测必须先勾选费用确认，"
-        "LLM 产物只有人工审核后才生效，系统不会自动宣称验收通过。"
+        "建库在本地完成。使用远程模型起草 Profile、评测题或运行在线评测前，需确认 API 费用。"
+        "模型生成的草稿需人工审核，评测通过也需核对答案事实。"
     )
     current = st.session_state.get("active_pack")
+    busy = _busy()
     if current:
-        st.caption(f"当前工作区：知识包 `{current}`")
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.caption(f"当前工作区：知识包 `{current}`")
+            if st.button(
+                "切回默认工作区",
+                key="switch_default_workspace",
+                type="tertiary",
+                disabled=busy,
+            ):
+                activate_pack(None)
     else:
         st.caption("当前工作区：部署默认工作区")
 
-    with st.container(border=True):
-        st.subheader("新建知识包")
+    catalog = PackCatalog(services.settings)
+    entries = catalog.list()
+    with st.expander("新建知识包", expanded=not bool(entries), key="new_pack_builder"):
         with st.form("pack_builder"):
             col1, col2 = st.columns(2)
             pack_id = col1.text_input(
@@ -317,16 +331,10 @@ def packs_page(services: Services) -> None:
                 "说明", key="pack_description_input", max_chars=1000, height=68
             )
             col1, col2 = st.columns(2)
-            intended_use = col1.text_input(
-                "预期用途", key="pack_use_input", max_chars=800
-            )
-            authority_scope = col2.text_input(
-                "权威范围", key="pack_scope_input", max_chars=800
-            )
+            intended_use = col1.text_input("预期用途", key="pack_use_input", max_chars=800)
+            authority_scope = col2.text_input("权威范围", key="pack_scope_input", max_chars=800)
             col1, col2 = st.columns(2)
-            language = col1.text_input(
-                "语言", value="zh", key="pack_language_input", max_chars=20
-            )
+            language = col1.text_input("语言", value="zh", key="pack_language_input", max_chars=20)
             license_status = col2.selectbox(
                 "资料授权",
                 list(LICENSE_LABELS),
@@ -358,7 +366,9 @@ def packs_page(services: Services) -> None:
                     services.settings.similarity_threshold,
                     step=0.01,
                 )
-            st.caption("构建期间页面会等待；大资料包需要几分钟。所有产物先写入暂存目录，成功后原子发布。")
+            st.caption(
+                "构建期间页面会等待；大资料包需要几分钟。所有产物先写入暂存目录，成功后原子发布。"
+            )
             submitted = st.form_submit_button("构建知识包", type="primary")
         if submitted:
             uploads = [(item.name, item.getvalue()) for item in (uploaded or [])]
@@ -380,19 +390,20 @@ def packs_page(services: Services) -> None:
                         similarity_threshold=threshold,
                     )
                     with st.spinner("正在解析、分块、建立索引并生成合规草稿…"):
-                        result = PackBuilder(
-                            services.settings, services.knowledge.embedder
-                        ).build(spec, uploads)
+                        result = PackBuilder(services.settings, services.knowledge.embedder).build(
+                            spec, uploads
+                        )
                     st.session_state["pack_build_result"] = result.model_dump(mode="json")
+                    st.session_state["pack_manage_select"] = result.pack_id
+                    st.session_state.pop("pack_lint_result", None)
+                    st.rerun()
                 except ValidationError as exc:
                     detail = exc.errors()[0].get("msg", str(exc))
                     st.error(f"知识包参数无效：{detail}")
                 except AppError as exc:
                     st.error(str(exc))
                 except Exception as exc:
-                    st.error(
-                        f"构建失败（{type(exc).__name__}）。请检查磁盘权限、模型缓存后重试。"
-                    )
+                    st.error(f"构建失败（{type(exc).__name__}）。请检查磁盘权限、模型缓存后重试。")
 
     result = st.session_state.get("pack_build_result")
     if result:
@@ -401,8 +412,6 @@ def packs_page(services: Services) -> None:
     st.divider()
     st.subheader("已有知识包")
     st.caption("这里只显示带 pack.json 的新知识包；旧版知识包继续使用原启动脚本。")
-    catalog = PackCatalog(services.settings)
-    entries = catalog.list()
     for warning in catalog.warnings:
         st.warning(warning)
     if not entries:
@@ -440,10 +449,15 @@ def packs_page(services: Services) -> None:
         pack_settings = load_pack_settings(selected, base=services.settings)
     except AppError as exc:
         st.error(f"知识包配置无效：{exc}")
-    if st.session_state.get("active_pack") == selected:
+    is_current_pack = st.session_state.get("active_pack") == selected
+    if is_current_pack:
         st.info("这是当前工作区。")
     cols = st.columns(2)
-    if cols[0].button("切换到该知识包", key="switch_existing_pack"):
+    if cols[0].button(
+        "切换到该知识包",
+        key="switch_existing_pack",
+        disabled=is_current_pack or busy,
+    ):
         activate_pack(selected)
     if cols[1].button("运行体检", key="lint_existing_pack"):
         if pack_settings is None:
@@ -661,11 +675,19 @@ def debug_page(services: Services) -> None:
     st.caption("观察候选片段、相关性门槛与证据判断，定位 RAG 为什么这样回答。")
     st.info("此页只检索并判断是否可回答，不生成最终答案、不写入聊天记录；证据判断会调用远程 API。")
     with st.form("inspect"):
-        question = st.text_area("调试问题", max_chars=2000, placeholder="输入一个希望分析的问题")
+        question = st.text_area(
+            "调试问题",
+            max_chars=2000,
+            placeholder="输入一个希望分析的问题",
+            key="debug_question",
+        )
         submitted = st.form_submit_button("运行检索与证据判断", type="primary")
     if submitted:
-        with st.spinner("正在检索与判断…"):
-            st.session_state["inspection"] = services.pipeline.inspect(question)
+        if not question.strip():
+            st.warning("请输入要分析的调试问题。")
+        else:
+            with st.spinner("正在检索与判断…"):
+                st.session_state["inspection"] = services.pipeline.inspect(question.strip())
     inspection = st.session_state.get("inspection")
     if inspection:
         st.caption(f"本次问题：{inspection.question}")

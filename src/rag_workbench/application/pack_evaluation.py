@@ -8,9 +8,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from rag_workbench.application.evaluation import EvalCase, evaluate
+from rag_workbench.application.evaluation import (
+    OUTPUT_ERROR_CODES,
+    EvalCase,
+    evaluate,
+    is_service_error,
+)
 from rag_workbench.application.knowledge import KnowledgeService
 from rag_workbench.application.pack_review import PackReview
+from rag_workbench.application.pack_state import pack_operation_lock
 from rag_workbench.application.packs import read_manifest
 from rag_workbench.application.pipeline import RagPipeline
 from rag_workbench.application.teaching import load_domain_profile, load_teaching_profile
@@ -21,6 +27,8 @@ from rag_workbench.domain.ports import ChatProvider
 
 DIAGNOSIS_CATEGORIES = (
     "service_error",
+    "evaluation_error",
+    "output_error",
     "retrieval_miss",
     "threshold_miss",
     "routing_error",
@@ -31,6 +39,8 @@ DIAGNOSIS_CATEGORIES = (
 )
 RECOMMENDATIONS = {
     "service_error": "检查 API Key、余额、网络与超时；服务错误不能当作知识库未命中。",
+    "evaluation_error": "评测发生未分类错误；保留留出集使用记录，检查错误码与运行环境。",
+    "output_error": "模型输出未通过格式或证据校验；检查 JSON、证据字段及响应完整性。",
     "retrieval_miss": "检查分块、查询扩展与 embedding；目标文档未进入候选。",
     "threshold_miss": "目标文档已召回但未过门槛；检查阈值/词法覆盖，或用调试页查看候选。",
     "routing_error": "证据已召回但路由不符；检查证据判断提示、profile 与证据门槛。",
@@ -72,6 +82,26 @@ class PackEvaluation:
         self.pack_dir = Path(pack_dir)
 
     def run(
+        self,
+        *,
+        split: Literal["dev", "holdout"],
+        online: bool,
+        confirm_cost: bool = False,
+        confirm_holdout: bool = False,
+    ) -> EvalRun:
+        try:
+            with pack_operation_lock(self.pack_dir):
+                return self._run(
+                    split=split, online=online,
+                    confirm_cost=confirm_cost, confirm_holdout=confirm_holdout,
+                )
+        except OSError as exc:
+            raise AppError(
+                "evaluation_io_error",
+                "评测文件读写失败，请检查磁盘与权限。已开始的 holdout 保留使用记录，避免重复验收。",
+            ) from exc
+
+    def _run(
         self,
         *,
         split: Literal["dev", "holdout"],
@@ -134,14 +164,17 @@ class PackEvaluation:
             teaching_profile=load_teaching_profile(self.settings.teaching_profile_path),
             domain_profile=load_domain_profile(self.settings.domain_profile_path),
         )
-        started = time.monotonic()
-        report = evaluate(pipeline, cases, with_routing=online)
-        duration = time.monotonic() - started
-        diagnosis = diagnose_report(report, online=online)
         run_id = (
             f"{split}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-"
             f"{uuid.uuid4().hex[:8]}"
         )
+        # Reserve before exposing any result. Interrupted/report-failed runs stay consumed.
+        if split == "holdout":
+            PackReview._mark_holdout_used(self.pack_dir, freeze.version, run_id=run_id)
+        started = time.monotonic()
+        report = evaluate(pipeline, cases, with_routing=online)
+        duration = time.monotonic() - started
+        diagnosis = diagnose_report(report, online=online)
         run_dir = self.pack_dir / "eval" / "runs" / freeze.version / run_id
         run_dir.mkdir(parents=True)
         summary = {key: value for key, value in report.items() if key != "results"}
@@ -160,7 +193,7 @@ class PackEvaluation:
             "labels_sha256": label_info.sha256,
             "metrics": summary,
             "diagnosis": diagnosis,
-            "holdout_consumed": False,
+            "holdout_consumed": split == "holdout",
             "limitations": LIMITATIONS,
         }
         _write_json(run_dir / "report.json", payload)
@@ -171,15 +204,13 @@ class PackEvaluation:
         if split == "holdout":
             # Do not burn the one-shot holdout when every case failed at the service layer.
             if online and report["service_errors"] == report["cases"]:
+                PackReview._release_failed_holdout(
+                    self.pack_dir, freeze.version, run_id=run_id
+                )
                 payload["holdout_consumed"] = False
                 payload["diagnosis"]["recommendations"].append(
                     "全部用例发生服务错误；本次未消耗 holdout，可修复服务后重试。"
                 )
-            else:
-                PackReview.mark_holdout_used(
-                    self.pack_dir, freeze.version, run_id=run_id
-                )
-                payload["holdout_consumed"] = True
             _write_json(run_dir / "report.json", payload)
             _write_text(run_dir / "report.md", _report_markdown(payload))
         return EvalRun(
@@ -244,8 +275,12 @@ def diagnose_report(report: dict, *, online: bool) -> dict:
 
 
 def _classify(row: dict, *, online: bool) -> str:
-    if row.get("error_code"):
-        return "service_error"
+    if error := row.get("error_code"):
+        if error == "invalid_citation":
+            return "citation_error"
+        if is_service_error(error):
+            return "service_error"
+        return "output_error" if error in OUTPUT_ERROR_CODES else "evaluation_error"
     expected = row.get("expected_mode")
     mode = row.get("mode")
     relevant = set(row.get("relevant_document_ids") or [])
@@ -307,6 +342,7 @@ def _report_markdown(payload: dict) -> str:
         "routing_accuracy",
         "citation_validity",
         "service_errors",
+        "evaluation_errors",
     ):
         value = metrics.get(key)
         lines.append(f"| {key} | {'未测' if value is None else value} |")

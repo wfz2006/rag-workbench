@@ -129,6 +129,8 @@
     const busy = !!status;
     const active = status?.closest('[data-testid="stChatMessage"]');
     const settled = view.wasBusy && !busy;
+    if (settled) view.settleUntil = performance.now() + 400;
+    const settling = settled || (view.settleUntil || 0) > performance.now();
     const freshGeneration = busy && status.dataset.generationKey !== view.generationKey;
     if (freshGeneration) {
       view.generationKey = status.dataset.generationKey;
@@ -152,7 +154,7 @@
     view.wasBusy = busy;
     // Streamlit can remove the running node one frame before inserting the
     // saved node. Keep the target through that gap, never fall back to tail.
-    if (view.follow && (!view.retryTarget || retry) && performance.now() - lastInput > 150 && (busy || grew || settled || retry)) {
+    if (view.follow && (!view.retryTarget || retry) && performance.now() - lastInput > 150 && (busy || grew || settling || retry)) {
       align(false, retry || nodes.at(-1), !!retry);
     }
     // One final alignment after the replacement mounts, then relinquish it.

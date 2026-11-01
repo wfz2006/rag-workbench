@@ -1,3 +1,4 @@
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -86,6 +87,27 @@ def load_settings(base: Settings | None = None) -> Settings:
 
 def environment_owned_keys(settings: Settings | None = None) -> set[str]:
     return set((settings or Settings())._environment_keys)
+
+
+def service_cache_key(settings: Settings) -> str:
+    """Include trusted local profile contents so edits invalidate only affected services."""
+    digest = hashlib.sha256((
+        settings.model_dump_json() + settings.api_key.get_secret_value()
+        + str(sorted(environment_owned_keys(settings)))
+    ).encode())
+    for path in (
+        settings.teaching_profile_path, settings.domain_profile_path,
+        settings.retrieval_expansions_path,
+    ):
+        if path is None:
+            continue
+        try:
+            # Profile loaders impose size limits; don't read an arbitrary large file here.
+            with path.open("rb") as stream:
+                digest.update(stream.read(65537))
+        except OSError:
+            digest.update(b"unreadable-profile")
+    return digest.hexdigest()
 
 
 def _effective_settings(base: Settings, saved: dict, *, recover: bool = False) -> Settings:

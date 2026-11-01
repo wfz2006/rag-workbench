@@ -157,6 +157,13 @@ def _composer(services: Services, session_id: str, job: GenerationJob | None) ->
                     width="stretch",
                 )
                 st.button(
+                    "构建或切换知识包",
+                    icon=":material/inventory_2:",
+                    on_click=navigate,
+                    args=("知识包",),
+                    width="stretch",
+                )
+                st.button(
                     "打开检索调试",
                     icon=":material/search:",
                     on_click=navigate,

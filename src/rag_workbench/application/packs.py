@@ -18,7 +18,7 @@ from filelock import FileLock, Timeout
 from pydantic import Field, field_validator, model_validator
 
 from rag_workbench.application.knowledge import KnowledgeService
-from rag_workbench.config import Settings, load_file_settings
+from rag_workbench.config import DEPLOYMENT_ONLY_SETTINGS, Settings, load_file_settings
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.models import Contract, Document, ImportFailure
 from rag_workbench.domain.ports import Embedder
@@ -303,11 +303,16 @@ def load_pack_settings(
         if data_dir is not None
         else (base.packs_data_dir / pack_id).resolve()
     )
-    return load_file_settings(
+    loaded = load_file_settings(
         summary.pack_dir / summary.settings_file,
         data_dir=target,
         env_file=base._deployment_env_file,
     )
+    # Pack-local settings cannot override deployment roots. Preserve the caller's
+    # explicit roots as well as roots supplied through .env/process environment.
+    return loaded.model_copy(update={
+        key: getattr(base, key).resolve() for key in DEPLOYMENT_ONLY_SETTINGS
+    })
 
 
 class PackBuilder:

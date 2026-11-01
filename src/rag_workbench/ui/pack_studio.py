@@ -11,26 +11,55 @@ from rag_workbench.application.pack_authoring import PackAuthoring
 from rag_workbench.application.pack_evaluation import PackEvaluation
 from rag_workbench.application.pack_review import PackReview
 from rag_workbench.application.packs import PackSummary
-from rag_workbench.bootstrap import Services
+from rag_workbench.bootstrap import Services, service_cache_key
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
 from rag_workbench.infrastructure.embedding import BgeEmbedder
+from rag_workbench.infrastructure.llm import OpenAIChatProvider
 
 COST_LABEL = "我确认会调用远程 LLM，可能产生 API 费用"
 PROFILE_STATUS = {"draft": "profile 草稿", "reviewed": "profile 已审核"}
 EVAL_STATUS = {"none": "无评测集", "candidate": "评测题候选中", "frozen": "评测集已冻结"}
+REVIEW_STATUS = {"pending": "待审核", "approved": "已批准", "rejected": "已拒绝"}
+SPLIT_LABELS = {"unassigned": "未分配", "dev": "开发集（dev）", "holdout": "留出集（holdout）"}
 
 
 def _knowledge(services: Services, pack_settings: Settings) -> KnowledgeService:
     if pack_settings.data_dir.resolve() == services.settings.data_dir.resolve():
         return services.knowledge
-    return KnowledgeService(pack_settings, BgeEmbedder(pack_settings))
+    return _cached_knowledge(service_cache_key(pack_settings), pack_settings)
+
+
+@st.cache_resource(show_spinner=False, max_entries=4)
+def _cached_knowledge(cache_key: str, _settings: Settings) -> KnowledgeService:
+    return KnowledgeService(_settings, BgeEmbedder(_settings))
+
+
+def _provider_key(settings: Settings) -> str:
+    fields = {"llm_model", "llm_base_url", "llm_timeout", "llm_max_tokens", "deepseek_mode"}
+    values = settings.model_dump(mode="json", include=fields)
+    values["api_key"] = settings.api_key.get_secret_value()
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
+
+
+def _provider(services: Services, pack_settings: Settings):
+    active = services.pipeline.provider
+    actual_settings = getattr(active, "settings", services.settings)
+    key = _provider_key(pack_settings)
+    if key == _provider_key(actual_settings):
+        return active
+    return _cached_provider(key, pack_settings)
+
+
+@st.cache_resource(show_spinner=False, max_entries=4)
+def _cached_provider(cache_key: str, _settings: Settings):
+    return OpenAIChatProvider(_settings.model_copy(deep=True))
 
 
 def _read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return ""
 
 
@@ -56,25 +85,27 @@ def _show_flash(key: str) -> None:
 def _load_freeze(pack_dir: Path):
     try:
         return PackReview.read_current_freeze(pack_dir)
-    except AppError:
-        return None
+    except AppError as exc:
+        if exc.code == "missing_freeze":
+            return None
+        raise
 
 
 def render_pack_studio(services: Services, entry: PackSummary, pack_settings: Settings) -> None:
-    knowledge = _knowledge(services, pack_settings)
     st.divider()
     st.subheader("审核与评测")
-    st.caption(
-        f"{PROFILE_STATUS[entry.profile_status]} · {EVAL_STATUS[entry.eval_status]} · "
-        f"holdout：{'已使用' if entry.holdout_status == 'used' else '未使用'}"
-    )
+    if not entry.has_data:
+        st.info("该知识包尚未建立本地索引。请先完成构建，再审核和评测。")
+        return
+    knowledge = _knowledge(services, pack_settings)
+    st.caption("按顺序完成：1. 审核 Profile → 2. 审核并冻结评测集 → 3. 运行离线或在线评测。")
     tabs = st.tabs(["Profile", "评测集", "评测报告"])
-    with tabs[0]:
-        _profile_tab(services, entry, pack_settings, knowledge)
-    with tabs[1]:
-        _eval_tab(services, entry, pack_settings, knowledge)
-    with tabs[2]:
-        _report_tab(services, entry, pack_settings, knowledge)
+    for tab, render in zip(tabs, (_profile_tab, _eval_tab, _report_tab), strict=True):
+        with tab:
+            try:
+                render(services, entry, pack_settings, knowledge)
+            except AppError as exc:
+                st.error(str(exc))
 
 
 def _profile_tab(
@@ -100,7 +131,7 @@ def _profile_tab(
         try:
             with st.spinner("正在请求模型起草 profile…"):
                 PackAuthoring(
-                    pack_settings, knowledge, services.pipeline.provider
+                    pack_settings, knowledge, _provider(services, pack_settings)
                 ).draft_profile(pack_dir, confirm_cost=True)
             _flash(flash_key, "profile 草案已生成，尚未替换当前 profile。")
         except AppError as exc:
@@ -123,13 +154,17 @@ def _profile_tab(
                 f"{str(draft_meta.get('input_sha256', '-'))[:12]}…"
             )
         cols = st.columns(2)
-        if cols[0].button("采用并标记已审核", key=f"adopt_draft_{entry.pack_id}"):
+        if cols[0].button(
+            "采用并标记已审核",
+            key=f"adopt_draft_{entry.pack_id}",
+            disabled=not edited.strip(),
+        ):
             try:
                 if edited.strip() == draft_text.strip():
                     PackReview.adopt_profile(pack_dir, accept_draft=True)
                 else:
                     PackReview.adopt_profile(pack_dir, content=edited, source="manual")
-                st.cache_resource.clear()
+                st.session_state.pop("pack_lint_result", None)
                 _flash(flash_key, "已采用 profile 草案并标记为已审核。")
             except AppError as exc:
                 _flash(flash_key, str(exc), error=True)
@@ -148,10 +183,14 @@ def _profile_tab(
         height=280,
         key=f"current_profile_{entry.pack_id}_{hashlib.sha256(current.encode()).hexdigest()[:8]}",
     )
-    if st.button("保存编辑并标记已审核", key=f"save_profile_{entry.pack_id}"):
+    if st.button(
+        "保存编辑并标记已审核",
+        key=f"save_profile_{entry.pack_id}",
+        disabled=not current_edit.strip(),
+    ):
         try:
             PackReview.adopt_profile(pack_dir, content=current_edit, source="manual")
-            st.cache_resource.clear()
+            st.session_state.pop("pack_lint_result", None)
             _flash(flash_key, "profile 已保存并标记为已审核。")
         except AppError as exc:
             _flash(flash_key, str(exc), error=True)
@@ -193,10 +232,8 @@ def _eval_tab(
         try:
             with st.spinner("正在请求模型起草评测题…"):
                 candidates = PackAuthoring(
-                    pack_settings, knowledge, services.pipeline.provider
-                ).generate_candidates(
-                    pack_dir, count=int(count), confirm_cost=True
-                )
+                    pack_settings, knowledge, _provider(services, pack_settings)
+                ).generate_candidates(pack_dir, count=int(count), confirm_cost=True)
             _flash(flash_key, f"已生成 {len(candidates)} 道候选评测题，尚未冻结。")
         except AppError as exc:
             _flash(flash_key, str(exc), error=True)
@@ -231,12 +268,14 @@ def _eval_tab(
                     "审核",
                     ["pending", "approved", "rejected"],
                     index=["pending", "approved", "rejected"].index(candidate.status),
+                    format_func=REVIEW_STATUS.get,
                     key=f"review_status_{entry.pack_id}_{candidate.id}",
                 )
                 split = cols[1].selectbox(
                     "分流",
                     ["unassigned", "dev", "holdout"],
                     index=["unassigned", "dev", "holdout"].index(candidate.split),
+                    format_func=SPLIT_LABELS.get,
                     key=f"review_split_{entry.pack_id}_{candidate.id}",
                 )
                 reference = st.text_area(
@@ -276,6 +315,7 @@ def _eval_tab(
         try:
             with st.spinner("正在校验并冻结评测集…"):
                 result = PackReview.freeze_eval(pack_dir, knowledge)
+            st.session_state.pop("pack_lint_result", None)
             _flash(
                 flash_key,
                 f"已冻结 {result.version}：dev {result.counts['dev']} 题 / "
@@ -296,16 +336,14 @@ def _report_tab(
     if freeze is None:
         st.info("还没有冻结的评测集；先到“评测集”标签审核并冻结。")
         return
-    if (
+    stale = (
         _sha256_file(pack_dir / "profile" / "profile.md") != freeze.profile_sha256
         or _sha256_file(pack_dir / "settings.json") != freeze.settings_sha256
         or not freeze.corpus_sha256
         or _sha256_file(pack_dir / "generated_manifest.jsonl") != freeze.corpus_sha256
-    ):
-        st.error(
-            "profile、settings 或正文清单在冻结后已变化；"
-            "需要重新冻结评测集，评测会被阻止。"
-        )
+    )
+    if stale:
+        st.error("profile、settings 或正文清单在冻结后已变化；需要重新冻结评测集，评测会被阻止。")
     st.caption(
         f"当前版本 {freeze.version} · holdout "
         f"{'已使用' if freeze.holdout_status == 'used' else '未使用'}"
@@ -315,6 +353,7 @@ def _report_tab(
     split = st.radio(
         "分流",
         ["dev", "holdout"],
+        format_func=SPLIT_LABELS.get,
         horizontal=True,
         key=f"report_split_{entry.pack_id}",
     )
@@ -330,7 +369,7 @@ def _report_tab(
     if cols[0].button(
         "运行离线评测",
         key=f"run_offline_{entry.pack_id}",
-        disabled=(split == "holdout" and not holdout_ack)
+        disabled=stale or (split == "holdout" and not holdout_ack)
         or (split == "holdout" and freeze.holdout_status == "used"),
     ):
         _run(
@@ -346,7 +385,7 @@ def _report_tab(
     if cols[1].button(
         "运行在线评测",
         key=f"run_online_{entry.pack_id}",
-        disabled=not online_ack
+        disabled=stale or not online_ack
         or (split == "holdout" and not holdout_ack)
         or (split == "holdout" and freeze.holdout_status == "used"),
     ):
@@ -364,16 +403,14 @@ def _report_tab(
     runs_root = pack_dir / "eval" / "runs"
     report_paths = sorted(
         runs_root.glob("*/*/report.json"),
-        key=lambda path: path.stat().st_mtime,
+        key=lambda path: (path.stat().st_mtime_ns, path.as_posix()),
         reverse=True,
     )
     if not report_paths:
         return
     st.markdown("#### 最近运行")
     labels = {
-        path.parent.relative_to(runs_root).as_posix(): path.parent.relative_to(
-            runs_root
-        ).as_posix()
+        path.parent.relative_to(runs_root).as_posix(): path.parent.relative_to(runs_root).as_posix()
         for path in report_paths[:10]
     }
     pending = st.session_state.pop(f"pending_report_run_{entry.pack_id}", None)
@@ -446,7 +483,7 @@ def _run(
     try:
         with st.spinner("正在运行评测；在线模式会逐题调用模型…"):
             run = PackEvaluation(
-                pack_settings, knowledge, services.pipeline.provider, entry.pack_dir
+                pack_settings, knowledge, _provider(services, pack_settings), entry.pack_dir
             ).run(
                 split=split,
                 online=online,
@@ -457,6 +494,7 @@ def _run(
         st.session_state[f"pending_report_run_{entry.pack_id}"] = (
             run.report_path.parent.relative_to(runs_root).as_posix()
         )
+        st.session_state.pop("pack_lint_result", None)
         _flash(
             flash_key,
             f"评测完成：{run.split}，{run.metrics.get('cases', 0)} 题；报告已写入。",

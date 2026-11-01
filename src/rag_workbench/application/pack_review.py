@@ -11,6 +11,7 @@ from pydantic import Field
 
 from rag_workbench.application.knowledge import KnowledgeService
 from rag_workbench.application.pack_authoring import EvalCandidate
+from rag_workbench.application.pack_state import locked_pack_operation, write_json_atomic
 from rag_workbench.application.packs import (
     PackManifest,
     read_manifest,
@@ -86,6 +87,7 @@ class PackReview:
         return candidates
 
     @staticmethod
+    @locked_pack_operation()
     def save_review(pack_dir: Path, decisions: dict[str, dict]) -> list[EvalCandidate]:
         pack_dir = Path(pack_dir)
         candidates = PackReview.read_candidates(pack_dir)
@@ -124,6 +126,7 @@ class PackReview:
         return reviewed
 
     @staticmethod
+    @locked_pack_operation()
     def adopt_profile(
         pack_dir: Path,
         *,
@@ -200,11 +203,27 @@ class PackReview:
         return meta.model_dump()
 
     @staticmethod
+    @locked_pack_operation()
     def freeze_eval(pack_dir: Path, knowledge: KnowledgeService) -> FreezeInfo:
+        # Hold a consistent knowledge snapshot while checking candidates and freezing labels.
+        with knowledge._locked():
+            return PackReview._freeze_eval(pack_dir, knowledge)
+
+    @staticmethod
+    def _freeze_eval(pack_dir: Path, knowledge: KnowledgeService) -> FreezeInfo:
         pack_dir = Path(pack_dir)
         manifest = read_manifest(pack_dir)
         if manifest.profile_status != "reviewed":
             raise AppError("profile_not_reviewed", "请先采用并审核 profile，再冻结评测集。")
+        try:
+            profile_hash = _sha256((pack_dir / "profile" / "profile.md").read_bytes())
+            meta = ProfileMeta.model_validate_json(
+                (pack_dir / "profile" / "profile.meta.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError) as exc:
+            raise AppError("stale_profile", "Profile 审核记录缺失或损坏，请重新审核保存。") from exc
+        if meta.content_sha256 != profile_hash:
+            raise AppError("stale_profile", "Profile 在审核后发生变化，请重新审核保存后冻结。")
         candidates = PackReview.read_candidates(pack_dir)
         approved = [candidate for candidate in candidates if candidate.status == "approved"]
         dev = [candidate for candidate in approved if candidate.split == "dev"]
@@ -215,6 +234,18 @@ class PackReview:
             raise AppError("missing_positive", "评测集至少需要一道正例。")
         if not any(candidate.category == "negative" for candidate in approved):
             raise AppError("missing_negative", "评测集至少需要一道负例。")
+        # Questions, index contents and thresholds may have changed since generation.
+        for candidate in approved:
+            eligible = {
+                item.chunk.id for item in knowledge.retrieve(candidate.question) if item.eligible
+            }
+            candidate.negative_risk = candidate.category == "negative" and bool(eligible)
+            candidate.reachable = (
+                not candidate.negative_risk if candidate.category == "negative"
+                else bool(candidate.relevant_chunk_ids)
+                and set(candidate.relevant_chunk_ids).issubset(eligible)
+            )
+        PackReview._write_candidates(pack_dir, candidates)
         risky_negatives = [
             candidate.id
             for candidate in approved
@@ -334,9 +365,17 @@ class PackReview:
         return freeze
 
     @staticmethod
+    @locked_pack_operation()
     def mark_holdout_used(
         pack_dir: Path, version: str, *, run_id: str, when: str | None = None
     ) -> FreezeInfo:
+        return PackReview._mark_holdout_used(pack_dir, version, run_id=run_id, when=when)
+
+    @staticmethod
+    def _mark_holdout_used(
+        pack_dir: Path, version: str, *, run_id: str, when: str | None = None
+    ) -> FreezeInfo:
+        """Caller must hold the pack operation lock."""
         pack_dir = Path(pack_dir)
         if not FREEZE_VERSION_RE.fullmatch(version):
             raise AppError("invalid_freeze_version", "冻结版本无效。")
@@ -361,14 +400,30 @@ class PackReview:
         return updated
 
     @staticmethod
+    def _release_failed_holdout(pack_dir: Path, version: str, *, run_id: str) -> None:
+        """Release only this run's reservation when no case reached the evidence layer."""
+        freeze = PackReview.read_current_freeze(pack_dir)
+        if freeze.version != version or freeze.holdout_run_id != run_id:
+            raise AppError("freeze_mismatch", "留出集状态已变化，未释放使用记录。")
+        updated = freeze.model_copy(update={
+            "holdout_status": "unused", "holdout_used_at": None, "holdout_run_id": None,
+        })
+        _write_json(Path(pack_dir) / "eval" / "freezes" / version / "freeze.json",
+                    updated.model_dump())
+        manifest = update_manifest(pack_dir, holdout_status="unused")
+        _update_readme_status(pack_dir, manifest)
+
+    @staticmethod
     def _read_current_freeze(pack_dir: Path) -> FreezeInfo | None:
         current_path = Path(pack_dir) / "eval" / "current.json"
         if not current_path.is_file():
             return None
         try:
             current = json.loads(current_path.read_text(encoding="utf-8"))
+            if not isinstance(current, dict):
+                raise ValueError("freeze pointer must be an object")
             version = str(current.get("version", ""))
-        except ValueError as exc:
+        except (OSError, ValueError) as exc:
             raise AppError("invalid_freeze", "eval/current.json 损坏。") from exc
         if not FREEZE_VERSION_RE.fullmatch(version):
             raise AppError("invalid_freeze", "eval/current.json 的版本无效。")
@@ -376,8 +431,11 @@ class PackReview:
         if not freeze_path.is_file():
             raise AppError("invalid_freeze", "当前冻结记录缺失。")
         try:
-            return FreezeInfo.model_validate_json(freeze_path.read_text(encoding="utf-8"))
-        except ValueError as exc:
+            freeze = FreezeInfo.model_validate_json(freeze_path.read_text(encoding="utf-8"))
+            if freeze.version != version:
+                raise ValueError("freeze version mismatch")
+            return freeze
+        except (OSError, ValueError) as exc:
             raise AppError("invalid_freeze", "当前冻结记录损坏。") from exc
 
     @staticmethod
@@ -477,11 +535,7 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 def _write_json(path: Path, payload) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json_atomic(path, payload)
 
 
 def _sha256(data: bytes) -> str:

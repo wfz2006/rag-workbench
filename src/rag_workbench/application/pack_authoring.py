@@ -10,6 +10,7 @@ from typing import Literal
 from pydantic import Field, ValidationError
 
 from rag_workbench.application.knowledge import KnowledgeService
+from rag_workbench.application.pack_state import locked_pack_operation
 from rag_workbench.application.packs import (
     PackManifest,
     read_manifest,
@@ -111,6 +112,7 @@ class PackAuthoring:
         self.knowledge = knowledge
         self.provider = provider
 
+    @locked_pack_operation(1)
     def draft_profile(self, pack_dir: Path, *, confirm_cost: bool) -> ProfileDraft:
         if not confirm_cost:
             raise AppError(
@@ -154,6 +156,7 @@ class PackAuthoring:
         )
         return ProfileDraft(content=content, path=profile_dir / "profile.draft.md", meta=meta)
 
+    @locked_pack_operation(1)
     def generate_candidates(
         self, pack_dir: Path, *, count: int = 12, confirm_cost: bool
     ) -> list[EvalCandidate]:

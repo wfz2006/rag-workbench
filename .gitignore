@@ -8,6 +8,7 @@ artifacts/
 .pytest-tmp/
 knowledge_packs/.staging/
 knowledge_packs/.pack-builder.lock
+knowledge_packs/*/.review.lock
 knowledge_packs/*/sources/
 __pycache__/
 *.py[cod]
