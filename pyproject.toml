@@ -18,6 +18,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=9,<10", "ruff>=0.17,<1", "reportlab>=5.1,<6"]
 desktop = ["pywebview>=6,<7; sys_platform == 'win32'"]
+preview = [
+    "pypdfium2>=5.9,<6",
+]
 
 [project.scripts]
 rag-workbench = "rag_workbench.cli:main"

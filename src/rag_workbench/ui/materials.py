@@ -3,7 +3,6 @@
 import hashlib
 import json
 from pathlib import Path
-from uuid import uuid4
 
 import streamlit as st
 from pydantic import ValidationError
@@ -12,6 +11,11 @@ from rag_workbench.application.materials import MaterialsService
 from rag_workbench.bootstrap import Services
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.materials import MaterialRecord
+from rag_workbench.infrastructure.material_draft_store import MaterialDraftStore
+from rag_workbench.ui import material_drafts as drafts
+from rag_workbench.ui.material_evidence import evidence_editor
+from rag_workbench.ui.material_recovery import render_recovery
+from rag_workbench.ui.material_viewer import render_source_viewer
 
 STATUS_LABELS = {"candidate": "待审核", "approved": "已批准", "rejected": "已拒绝"}
 DOMAIN_LABELS = {
@@ -70,12 +74,80 @@ def _flash(message: str, *, error=False) -> None:
     st.session_state["materials_notice"] = (message, error)
 
 
+def _remember_document() -> None:
+    st.session_state["materials_document_focus"] = st.session_state["materials_selected_doc"]
+    st.session_state.pop("materials_source_focus", None)
+    st.session_state["materials_source_reset"] = True
+
+
+def _remember_record(document_id: str) -> None:
+    st.session_state.setdefault("materials_record_focus", {})[document_id] = (
+        st.session_state["materials_selected_record"]
+    )
+
+
+def _select_record(document_id: str) -> None:
+    _remember_record(document_id)
+    st.session_state.pop("materials_source_focus", None)
+    st.session_state["materials_source_reset"] = True
+
+
+def _locate_evidence(block, quote: str) -> None:
+    st.session_state["materials_source_focus"] = {
+        "document_id": block.document_id, "block_id": block.id, "quote": quote,
+    }
+    st.session_state["materials_review_view"] = "source"
+
+
+def _next_candidate(document_id: str, identity: str) -> None:
+    st.session_state[f"materials_filter_{document_id}"] = "candidate"
+    st.session_state["materials_selected_record"] = identity
+    _select_record(document_id)
+    st.session_state["materials_review_view"] = "record"
+
+
 def _business_payload(record: MaterialRecord) -> dict:
     return {
         key: value
         for key, value in record.model_dump(mode="json").items()
         if key not in IMMUTABLE_FIELDS
     }
+
+
+def _manual_identity(record: MaterialRecord) -> str:
+    payload = _business_payload(record)
+    for field in ("value_normalized", "unit_normalized"):
+        payload.pop(field, None)
+    payload["evidence"] = sorted(
+        payload["evidence"], key=lambda item: json.dumps(item, sort_keys=True),
+    )
+    return hashlib.sha256(json.dumps(
+        {"document_id": record.document_id, **payload}, sort_keys=True, ensure_ascii=False,
+    ).encode()).hexdigest()
+
+
+def _save_manual_candidate(service, record):
+    record = record.model_copy(update={"id": _manual_identity(record)})
+    existing = service.repo.record(record.id)
+    if existing is None:
+        try:
+            saved = service.add_record(record)
+            if _manual_identity(saved) != record.id:
+                raise AppError(
+                    "material_candidate_revised",
+                    "候选已被另一窗口修订；未清理当前草稿，请核对现有记录。",
+                )
+            return saved, saved.created_at == record.created_at
+        except AppError as exc:
+            if exc.code != "material_record_exists":
+                raise
+            existing = service.repo.record(record.id)
+    if existing is None or _manual_identity(existing) != record.id:
+        raise AppError(
+            "material_candidate_revised",
+            "这份候选此前已保存并被修订；未重复新增，草稿仍保留，请先核对现有记录。",
+        )
+    return existing, False
 
 
 def _payload(text: str) -> dict:
@@ -122,7 +194,7 @@ def _show_sources(service, document) -> list:
     block = next(item for item in blocks if item.id == selected)
     st.text(block.text)
     st.caption(f"原文块编号：{block.id}")
-    with st.expander("复制字段证据模板"):
+    with st.expander("复制字段证据模板", key="materials_source_template", on_change="rerun"):
         fields = st.multiselect(
             "这段原文支持哪些字段",
             list(FIELD_LABELS),
@@ -150,13 +222,18 @@ def _show_sources(service, document) -> list:
 
 def _record_evidence(service, record, blocks) -> None:
     source_map = {block.id: block for block in blocks}
-    with st.expander(f"查看 {len(record.evidence)} 条字段证据", expanded=bool(record.evidence)):
+    with st.expander(f"查看 {len(record.evidence)} 条字段证据"):
         if not record.evidence:
             st.caption("尚无字段证据；批准前需补充材料、性能值及各非空字段的原文依据。")
-        for reference in record.evidence:
+        groups = {}
+        for index, reference in enumerate(record.evidence):
+            groups.setdefault((reference.block_id, reference.quote), []).append((index, reference))
+        for entries in groups.values():
+            index, reference = entries[0]
             block = source_map.get(reference.block_id)
             page = f"PDF 第 {block.page} 页" if block and block.page else "文本原文"
-            st.caption(f"{FIELD_LABELS.get(reference.field, reference.field)} · {page}")
+            labels = dict.fromkeys(FIELD_LABELS.get(item.field, item.field) for _, item in entries)
+            st.caption(f"{'、'.join(labels)} · {page}")
             st.text(reference.quote)
             if block is None:
                 st.warning("该证据块不在当前论文及其补充材料中，请重新关联。")
@@ -165,10 +242,31 @@ def _record_evidence(service, record, blocks) -> None:
                 st.caption(
                     f"来源：{source.name if source else block.document_id} · {block.id[:12]}"
                 )
+                st.button(
+                    "在原文中查看", key=f"materials_locate_{record.id}_{index}",
+                    on_click=_locate_evidence, args=(block, reference.quote),
+                )
 
 
-def _record_form_fields(defaults: dict, prefix: str) -> dict:
-    """All widgets live in their caller's form: checking confirmation never reruns editing."""
+def _editor_defaults(defaults: dict) -> dict:
+    return {
+        **{field: defaults.get(field) or "" for field in FIELD_LABELS},
+        "domain": defaults.get("domain", "ofet"),
+        "evidence": json.dumps(defaults.get("evidence", []), ensure_ascii=False, indent=2),
+    }
+
+
+def _record_form_fields(defaults: dict, prefix: str, blocks: list) -> dict:
+    """Commit on blur to a session draft, then explicitly save to the repository."""
+    initial = _editor_defaults(defaults)
+    drafts.hydrate(prefix, initial)
+    if drafts.dirty(prefix, initial):
+        st.info("有尚未提交为实验记录的修改，可继续编辑、保存或放弃。")
+    drafts.status(prefix)
+    st.button(
+        "放弃此草稿", key=f"{prefix}_discard", on_click=drafts.discard, args=(prefix,),
+        disabled=not drafts.dirty(prefix, initial), type="tertiary",
+    )
     values = {}
     left, right = st.columns(2)
     for column, field in (
@@ -179,7 +277,8 @@ def _record_form_fields(defaults: dict, prefix: str) -> dict:
         (left, "sample_label"),
     ):
         value = column.text_input(
-            FIELD_LABELS[field], value=defaults.get(field) or "", key=f"{prefix}_{field}"
+            FIELD_LABELS[field], key=f"{prefix}_{field}",
+            on_change=drafts.remember, args=(prefix, field),
         )
         values[field] = (
             value if field in {"material_name", "property_name", "value_raw"} else value or None
@@ -188,10 +287,12 @@ def _record_form_fields(defaults: dict, prefix: str) -> dict:
         "器件模板",
         list(DOMAIN_LABELS),
         format_func=DOMAIN_LABELS.get,
-        index=list(DOMAIN_LABELS).index(defaults.get("domain", "ofet")),
         key=f"{prefix}_domain",
+        on_change=drafts.remember, args=(prefix, "domain"),
     )
-    with st.expander("补充工艺、测试条件与结构", expanded=False):
+    with st.expander(
+        "补充工艺、测试条件与结构", key=f"{prefix}_details", on_change="rerun",
+    ):
         for field in (
             "process",
             "conditions",
@@ -202,26 +303,27 @@ def _record_form_fields(defaults: dict, prefix: str) -> dict:
             values[field] = (
                 st.text_area(
                     FIELD_LABELS[field],
-                    defaults.get(field) or "",
                     height=90,
                     key=f"{prefix}_{field}",
+                    on_change=drafts.remember, args=(prefix, field),
                 )
                 or None
             )
         for field in ("carrier", "regime", "statistic"):
             values[field] = (
                 st.text_input(
-                    FIELD_LABELS[field], defaults.get(field) or "", key=f"{prefix}_{field}"
+                    FIELD_LABELS[field], key=f"{prefix}_{field}",
+                    on_change=drafts.remember, args=(prefix, field),
                 )
                 or None
             )
-    raw_evidence = st.text_area(
-        "字段证据（JSON 列表）",
-        json.dumps(defaults.get("evidence", []), ensure_ascii=False, indent=2),
-        height=170,
-        key=f"{prefix}_evidence",
-        help="在“原文证据”页复制模板。一段原文可支持多个字段，quote 必须与原文一致。",
-    )
+    evidence_editor(prefix, blocks, FIELD_LABELS)
+    with st.expander("高级：字段证据 JSON", key=f"{prefix}_evidence_panel", on_change="rerun"):
+        raw_evidence = st.text_area(
+            "字段证据（JSON 列表）", height=170, key=f"{prefix}_evidence",
+            help="一段引文可支持多个字段，quote 必须与原文一致。",
+            on_change=drafts.remember, args=(prefix, "evidence"),
+        )
     values["evidence"] = raw_evidence
     return values
 
@@ -233,16 +335,33 @@ def _form_record(values: dict, original: dict) -> MaterialRecord:
 
 def _review(service, document, blocks) -> None:
     records = service.repo.records(document.id)
+    pending = [record for record in records if record.status == "candidate"]
     st.subheader("实验记录核对")
     st.caption("候选未经确认，不会进入默认导出。不同样品、工艺或测试条件应保留为不同记录。")
     if records:
+        status = st.selectbox(
+            "审核筛选", ["all", *STATUS_LABELS], key=f"materials_filter_{document.id}",
+            format_func=lambda value: "全部记录" if value == "all" else STATUS_LABELS[value],
+        )
+        total = len(records)
+        records = [record for record in records if status == "all" or record.status == status]
+        st.caption(f"显示 {len(records)} / {total} 条记录；修改字段后需点击保存或批准。")
+    if records:
         identities = [item.id for item in records]
-        if st.session_state.get("materials_selected_record") not in identities:
-            st.session_state["materials_selected_record"] = identities[0]
+        if (
+            st.session_state.get("materials_selected_record") not in identities
+            or st.session_state.get("materials_record_document") != document.id
+        ):
+            remembered = st.session_state.get("materials_record_focus", {}).get(document.id)
+            st.session_state["materials_selected_record"] = (
+                remembered if remembered in identities else identities[0]
+            )
+        st.session_state["materials_record_document"] = document.id
         selected = st.selectbox(
             "选择实验记录",
             identities,
             key="materials_selected_record",
+            on_change=_select_record, args=(document.id,),
             format_func=lambda identity: next(
                 f"{index + 1} · {r.material_name} · {r.property_name} · "
                 f"{r.value_raw} {r.unit_raw or ''} · {STATUS_LABELS[r.status]}"
@@ -251,23 +370,64 @@ def _review(service, document, blocks) -> None:
             ),
         )
         record = next(item for item in records if item.id == selected)
+        _remember_record(document.id)
         st.caption(f"{STATUS_LABELS[record.status]} · 修订 {record.revision} · {record.id[:12]}")
+        pending_ids = [item.id for item in pending]
+        if record.id in pending_ids:
+            following = (
+                pending_ids[(pending_ids.index(record.id) + 1) % len(pending_ids)]
+                if len(pending_ids) > 1 else None
+            )
+        else:
+            following = pending_ids[0] if pending_ids else None
+        st.button(
+            "下一条待审核", key="materials_next_candidate", disabled=following is None,
+            on_click=_next_candidate, args=(document.id, following), type="tertiary",
+        )
         _record_evidence(service, record, blocks)
         focus = (record.id, record.revision)
         if st.session_state.get("materials_review_focus") != focus:
             st.session_state.pop("materials_review_confirm", None)
             st.session_state["materials_review_focus"] = focus
-        with st.form(f"materials_review_{record.id}_{record.revision}"):
-            values = _record_form_fields(
-                _business_payload(record), f"materials_edit_{record.id}_{record.revision}"
+        prefix = f"materials_edit_{record.id}_{record.revision}"
+        json_prefix = f"materials_json_{record.id}_{record.revision}"
+        old_drafts = {
+            key: value for key, value in st.session_state.get("materials_drafts", {}).items()
+            if key.startswith((f"materials_edit_{record.id}_", f"materials_json_{record.id}_"))
+            and key not in {prefix, json_prefix}
+        }
+        if old_drafts:
+            st.warning("该记录已有新修订，旧版本草稿未自动覆盖新记录。可展开查看并手工合并。")
+            with st.expander("查看旧版本草稿"):
+                st.json(old_drafts)
+        with st.container(border=True):
+            drafts.bind(
+                prefix, document_id=document.id, kind="review",
+                record_id=record.id, base_revision=record.revision,
             )
+            values = _record_form_fields(
+                _business_payload(record), prefix, blocks,
+            )
+            try:
+                references = json.loads(values["evidence"])
+                covered = {
+                    item.get("field") for item in references if isinstance(item, dict)
+                } if isinstance(references, list) else set()
+                missing = [
+                    FIELD_LABELS[field] for field in FIELD_LABELS
+                    if values.get(field) and field not in covered
+                ]
+                if missing:
+                    st.caption("尚未关联字段证据：" + "、".join(missing))
+            except (ValueError, TypeError):
+                pass  # Incomplete evidence JSON is validated only on an explicit submit.
             confirmed = st.checkbox(
                 "我已逐项核对数值、单位、样品、条件与字段证据", key="materials_review_confirm"
             )
             col1, col2, col3 = st.columns(3)
-            save = col1.form_submit_button("保存候选", key="materials_save_candidate")
-            approve = col2.form_submit_button("批准记录", key="materials_approve", type="primary")
-            reject = col3.form_submit_button("拒绝记录", key="materials_reject")
+            save = col1.button("保存候选", key="materials_save_candidate")
+            approve = col2.button("批准记录", key="materials_approve", type="primary")
+            reject = col3.button("拒绝记录", key="materials_reject")
             if save or approve or reject:
                 try:
                     if approve and not confirmed:
@@ -275,25 +435,45 @@ def _review(service, document, blocks) -> None:
                     updated = _form_record(values, record.model_dump())
                     status = "approved" if approve else "rejected" if reject else "candidate"
                     service.review(record.id, updated, status=status)
+                    st.session_state["materials_reset_draft"] = prefix
                     _flash(f"记录{STATUS_LABELS[status]}，已保存修订。")
                     st.rerun()
                 except (AppError, ValueError, ValidationError) as exc:
                     _error(exc)
-        with st.expander("高级：完整字段 JSON 编辑"):
+        with st.expander(
+            "高级：完整字段 JSON 编辑", key=f"{json_prefix}_panel", on_change="rerun",
+        ):
             st.caption("JSON 编辑保存为候选，仍需在上方逐项核对后批准。")
-            with st.form(f"materials_json_review_{record.id}_{record.revision}"):
+            json_defaults = {
+                "record": json.dumps(_business_payload(record), ensure_ascii=False, indent=2),
+            }
+            drafts.bind(
+                json_prefix, document_id=document.id, kind="json",
+                record_id=record.id, base_revision=record.revision,
+            )
+            drafts.hydrate(json_prefix, json_defaults)
+            drafts.status(json_prefix)
+            if drafts.dirty(json_prefix, json_defaults):
+                st.info("完整 JSON 有未保存的修改；它与上方字段草稿分别保存，请选择一处提交。")
+            st.button(
+                "放弃 JSON 草稿", key=f"{json_prefix}_discard", type="tertiary",
+                disabled=not drafts.dirty(json_prefix, json_defaults),
+                on_click=drafts.discard, args=(json_prefix,),
+            )
+            with st.container():
                 edited = st.text_area(
                     "记录字段（JSON）",
-                    json.dumps(_business_payload(record), ensure_ascii=False, indent=2),
                     height=300,
-                    key=f"materials_record_json_{record.id}_{record.revision}",
+                    key=f"{json_prefix}_record",
+                    on_change=drafts.remember, args=(json_prefix, "record"),
                 )
-                if st.form_submit_button("保存 JSON 候选", key="materials_save_json"):
+                if st.button("保存 JSON 候选", key="materials_save_json"):
                     try:
                         updated = MaterialRecord.model_validate(
                             {**record.model_dump(), **_payload(edited)}
                         )
                         service.review(record.id, updated, status="candidate")
+                        st.session_state["materials_reset_draft"] = json_prefix
                         _flash("JSON 候选已保存，请核对后批准。")
                         st.rerun()
                     except (AppError, ValueError, ValidationError) as exc:
@@ -303,20 +483,28 @@ def _review(service, document, blocks) -> None:
             with st.expander(f"修订历史（{len(revisions)}）"):
                 st.json(revisions, expanded=False)
     else:
-        st.info("还没有实验记录。可提取候选，也可根据原文手工添加。")
-    _manual_record(service, document)
+        st.info("当前没有可核对的记录。可调整审核筛选、提取候选或根据原文手工添加。")
+    _manual_record(service, document, blocks)
 
 
-def _manual_record(service, document) -> None:
-    with st.expander("手工添加候选（无需 API）"):
-        st.caption("先在“原文证据”页复制证据模板。以下只提供空字段，不填入虚构实验数据。")
-        with st.form(f"materials_add_{document.id}"):
-            values = _record_form_fields({"domain": "ofet"}, f"materials_new_{document.id}")
-            if st.form_submit_button("保存新候选", key="materials_add_candidate"):
+def _manual_record(service, document, blocks) -> None:
+    prefix = f"materials_new_{document.id}"
+    with st.expander("手工添加候选（无需 API）", key=f"{prefix}_panel", on_change="rerun"):
+        st.caption("填写原文字段，可直接关联证据。保存成功后清空表单，继续添加下一条。")
+        with st.container(border=True):
+            drafts.bind(prefix, document_id=document.id, kind="manual")
+            values = _record_form_fields({"domain": "ofet"}, prefix, blocks)
+            if st.button("保存新候选", key="materials_add_candidate"):
                 try:
-                    record = _form_record(values, {"id": uuid4().hex, "document_id": document.id})
-                    service.add_record(record)
-                    _flash("已添加候选，请核对字段证据后批准。")
+                    record = _form_record(values, {"id": "manual", "document_id": document.id})
+                    record, created = _save_manual_candidate(service, record)
+                    st.session_state["materials_reset_draft"] = prefix
+                    st.session_state["materials_pending_record"] = record.id
+                    st.session_state["materials_pending_record_document"] = document.id
+                    _flash(
+                        "已添加候选，请核对字段证据后批准。" if created
+                        else "这份候选已保存，已定位到现有记录；未重复新增或改变审核状态。"
+                    )
                     st.rerun()
                 except (AppError, ValueError, ValidationError) as exc:
                     _error(exc)
@@ -338,13 +526,27 @@ def _extraction(service, services, document) -> None:
     except AppError as exc:
         st.error(str(exc))
         return
-    st.selectbox(
+    domain = st.selectbox(
         "指标模板", list(DOMAIN_LABELS), format_func=DOMAIN_LABELS.get, key="materials_domain"
     )
-    has_key = bool(services.settings.api_key.get_secret_value().strip())
+    actual = getattr(service.provider, "settings", services.settings)
+    key = actual.api_key.get_secret_value().strip()
+    has_key = bool(key)
     if not has_key:
         st.caption("尚未配置 API Key；仍可导入原文、手工添加、审核及导出记录。")
-    st.caption(f"文字提取模型：{services.settings.llm_model}")
+    st.caption(f"文字提取模型：{actual.llm_model}")
+    scope_ids = sorted(
+        item.id for item in service.repo.documents()
+        if item.id == document.id or item.parent_id == document.id
+    )
+    consent_scope = hashlib.sha256(json.dumps({
+        "documents": scope_ids, "domain": domain, "model": actual.llm_model,
+        "endpoint": actual.llm_base_url,
+        "credential": hashlib.sha256(key.encode()).hexdigest(),
+    }, sort_keys=True).encode()).hexdigest()
+    if st.session_state.get("materials_consent_scope") != consent_scope:
+        st.session_state["materials_extract_consent"] = False
+        st.session_state["materials_consent_scope"] = consent_scope
     confirmed = st.checkbox(
         "我同意将上述文献文字发送到当前模型接口，可能产生 API 费用",
         key="materials_extract_consent",
@@ -391,6 +593,10 @@ def _exports(service, document) -> None:
         st.warning("当前下载包含未审核或已拒绝记录，仅用于整理，不应直接作为训练真值。")
     st.caption("CSV 一行一项性能观测；完整包保留嵌套字段、字段证据与原文定位。")
     records = service.repo.records(document.id)
+    count = sum(record.status == "approved" or not approved_only for record in records)
+    st.caption(f"本次导出：{document.name} · {count} 条实验记录。")
+    if not count:
+        st.info("当前筛选下没有记录；导出只含表头和原文资料。可先审核记录或调整筛选。")
     fingerprint = hashlib.sha256(
         json.dumps(
             {
@@ -406,17 +612,26 @@ def _exports(service, document) -> None:
         st.session_state.pop("materials_prepared_export", None)
         prepared = None
     if st.button("准备导出文件", key="materials_prepare_export"):
+        st.session_state.pop("materials_prepared_export", None)
+        prepared = None
         try:
             with st.spinner("正在校验证据与原件，准备导出文件…"):
                 prepared = {
                     "fingerprint": fingerprint,
                     "csv": service.export_csv(document.id, approved_only=approved_only),
-                    "bundle": service.export_bundle(document.id, approved_only=approved_only),
                 }
+                try:
+                    prepared["bundle"] = service.export_bundle(
+                        document.id, approved_only=approved_only,
+                    )
+                except AppError as exc:
+                    prepared["bundle_error"] = f"完整数据包未能生成：{exc}。CSV 仍可下载。"
             st.session_state["materials_prepared_export"] = prepared
         except AppError as exc:
             st.error(str(exc))
     if prepared:
+        if prepared.get("bundle_error"):
+            st.error(prepared["bundle_error"])
         st.download_button(
             "下载 CSV",
             prepared["csv"],
@@ -424,13 +639,14 @@ def _exports(service, document) -> None:
             mime="text/csv",
             key="materials_download_csv",
         )
-        st.download_button(
-            "下载完整数据包",
-            prepared["bundle"],
-            file_name="materials-dataset.zip",
-            mime="application/zip",
-            key="materials_download_bundle",
-        )
+        if prepared.get("bundle"):
+            st.download_button(
+                "下载完整数据包",
+                prepared["bundle"],
+                file_name="materials-dataset.zip",
+                mime="application/zip",
+                key="materials_download_bundle",
+            )
     else:
         st.caption("点击准备后下载。修改记录、切换文献或审核筛选后，需要重新准备。")
 
@@ -438,13 +654,29 @@ def _exports(service, document) -> None:
 def materials_page(services: Services) -> None:
     _workspace_state(services.settings.data_dir)
     service = MaterialsService(services.settings, services.pipeline.provider)
+    try:
+        draft_store = MaterialDraftStore(service.repo.root)
+    except AppError as exc:
+        draft_store = None
+        st.warning(f"本地草稿存储暂不可用，当前会话仍可编辑：{exc}")
+    drafts.configure(draft_store)
+    drafts.collect_resets()
+    if selected_record := st.session_state.pop("materials_pending_record", None):
+        st.session_state["materials_selected_record"] = selected_record
+        if identity := st.session_state.pop("materials_pending_record_document", None):
+            st.session_state[f"materials_filter_{identity}"] = "all"
+            st.session_state.setdefault("materials_record_focus", {})[identity] = selected_record
     with st.container(key="materials_page"):
         st.title("材料文献")
         st.caption("有机半导体 / 论文、样品、工艺、测试与性能的原文关联")
         if notice := st.session_state.pop("materials_notice", None):
             (st.error if notice[1] else st.success)(notice[0])
+            st.toast(notice[0], icon=":material/error:" if notice[1] else ":material/check_circle:")
         documents = service.repo.documents()
-        with st.expander("导入论文与补充材料", expanded=not documents):
+        with st.expander(
+            "导入论文与补充材料", expanded=not documents,
+            key="materials_import_panel", on_change="rerun",
+        ):
             uploads = st.file_uploader(
                 "选择 PDF、TXT 或 Markdown",
                 type=["pdf", "txt", "md"],
@@ -495,20 +727,26 @@ def materials_page(services: Services) -> None:
                     st.error(message)
                 if imported:
                     st.session_state["materials_selected_doc"] = imported[-1].id
+                    st.session_state["materials_document_focus"] = imported[-1].id
                     _flash(f"已保存 {len(imported)} 份文献原文。")
                     if not errors:
                         st.rerun()
                     documents = service.repo.documents()
+        render_recovery(service, draft_store)
         if not documents:
             st.info("先上传一篇论文，保留原文后再提取或手工整理实验记录。")
             return
         identities = [doc.id for doc in documents]
         if st.session_state.get("materials_selected_doc") not in identities:
-            st.session_state["materials_selected_doc"] = identities[0]
+            remembered = st.session_state.get("materials_document_focus")
+            st.session_state["materials_selected_doc"] = (
+                remembered if remembered in identities else identities[0]
+            )
         selected = st.selectbox(
             "当前文献",
             identities,
             key="materials_selected_doc",
+            on_change=_remember_document,
             format_func=lambda identity: next(
                 f"{d.name} · {'正文' if d.role == 'main' else '补充材料'}"
                 for d in documents
@@ -527,8 +765,20 @@ def materials_page(services: Services) -> None:
         with source_tab:
             blocks = _show_sources(service, document)
         with review_tab:
-            _extraction(service, services, document)
-            st.divider()
-            _review(service, document, blocks)
+            st.radio(
+                "核对视图", ["record", "source"], key="materials_review_view", horizontal=True,
+                format_func=lambda value: "编辑记录" if value == "record" else "原文预览",
+            )
+            with st.expander(
+                "模型提取候选", expanded=not records,
+                key=f"materials_extract_panel_{document.id}", on_change="rerun",
+            ):
+                _extraction(service, services, document)
+            with st.container(key="materials_review_grid"):
+                source_column, record_column = st.columns([1, 1.05], gap="large")
+                with source_column, st.container(key="materials_source_column"):
+                    render_source_viewer(service, document, blocks)
+                with record_column, st.container(key="materials_record_column"):
+                    _review(service, document, blocks)
         with export_tab:
             _exports(service, document)

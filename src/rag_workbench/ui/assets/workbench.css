@@ -400,11 +400,22 @@ h3 {font-size:17px!important;font-weight:550!important;}
 }
 
 /* Materials is an independent page; keep its layout changes scoped. */
-.block-container:has(.st-key-materials_page) {max-width:1120px;}
+.block-container:has(.st-key-materials_page) {max-width:1440px;}
 .st-key-materials_page [data-testid="stCaptionContainer"] p {line-height:1.75;}
 .st-key-materials_page [data-testid="stText"] {white-space:pre-wrap;overflow-wrap:anywhere;}
 .st-key-materials_page [data-testid="stForm"] {border-color:var(--cds-border-strong);}
 .st-key-materials_page [data-testid="stCode"] {max-width:100%;}
+.st-key-materials_review_view {display:none;}
+.st-key-materials_review_grid [data-testid="stColumn"] {min-width:0;}
+.st-key-materials_source_column iframe {max-width:100%;border:1px solid var(--cds-border-strong);border-radius:8px;}
+@media(max-width:1100px) {
+  .st-key-materials_review_view {display:block;}
+  .st-key-materials_review_grid [data-testid="stHorizontalBlock"]:has(.st-key-materials_source_column) {flex-direction:column;}
+  .st-key-materials_review_grid [data-testid="stColumn"]:has(.st-key-materials_source_column),
+  .st-key-materials_review_grid [data-testid="stColumn"]:has(.st-key-materials_record_column) {width:100%!important;min-width:0;flex:auto;}
+  .st-key-materials_page:has(.st-key-materials_review_view input[value="0"]:checked) .st-key-materials_review_grid [data-testid="stColumn"]:has(.st-key-materials_source_column) {display:none;}
+  .st-key-materials_page:has(.st-key-materials_review_view input[value="1"]:checked) .st-key-materials_review_grid [data-testid="stColumn"]:has(.st-key-materials_record_column) {display:none;}
+}
 [data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input[value="5"])::before {mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='1.5' stroke-linejoin='round' d='M4 3h12l4 4v14H4V3Zm12 0v4h4M8 11h8M8 15h8M8 18h5'/%3E%3C/svg%3E");}
 @media(max-width:767px) {
   .st-key-materials_page [data-testid="stHorizontalBlock"] {flex-direction:column;gap:8px;}

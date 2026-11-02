@@ -10,6 +10,13 @@ from streamlit.testing.v1 import AppTest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _export_downloads(app):
+    return [
+        item for item in app.get("download_button")
+        if item.key.startswith("materials_download_")
+    ]
+
+
 def _app(service, settings, monkeypatch):
     from rag_workbench.ui import materials
 
@@ -90,9 +97,9 @@ def test_review_and_downloads_keep_candidates_separate(settings, monkeypatch):
     assert service.repo.record(record.id).status == "approved"
     assert any("已批准" in message.value for message in app.success)
     app.button(key="materials_prepare_export").click().run()
-    downloads = app.get("download_button")
+    downloads = _export_downloads(app)
     assert {item.label for item in downloads} == {"下载 CSV", "下载完整数据包"}
-    assert app.text_area(key=f"materials_record_json_{record.id}_2")
+    assert app.text_area(key=f"materials_json_{record.id}_2_record")
 
 
 def test_invalid_review_json_keeps_candidate_and_surfaces_error(settings, monkeypatch):
@@ -111,7 +118,7 @@ def test_invalid_review_json_keeps_candidate_and_surfaces_error(settings, monkey
     )
     service.add_record(record)
     app = _app(service, settings, monkeypatch)
-    app.text_area(key=f"materials_record_json_{record.id}_1").set_value(json.dumps([]))
+    app.text_area(key=f"materials_json_{record.id}_1_record").set_value(json.dumps([]))
     app.button(key="materials_save_json").click().run()
     assert not app.exception
     assert app.error
@@ -184,11 +191,11 @@ def test_export_is_prepared_once_and_invalidates_on_filter_change(settings, monk
     app.button(key="materials_prepare_export").click().run()
     assert not app.exception
     assert len(calls) == 1
-    assert app.get("download_button")
+    assert _export_downloads(app)
     app.run()
     assert len(calls) == 1
     app.checkbox(key="materials_approved_only").uncheck().run()
-    assert not app.get("download_button")
+    assert not _export_downloads(app)
     assert len(calls) == 1
 
 

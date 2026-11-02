@@ -260,9 +260,22 @@ def sidebar(services: Services) -> tuple[str, str]:
                 st.rerun()
         with st.popover("管理当前会话", icon=":material/more_horiz:", key="session_manage"):
             current = next(s for s in sessions if s["id"] == st.session_state["session_id"])
+            rename_key = f"rename_{current['id']}"
+            baselines = st.session_state.setdefault("rename_title_baselines", {})
+            previous_title = baselines.get(current["id"], current["title"])
+            # A keyed widget ignores a new `value` after its first render. Refresh
+            # untouched names after automatic retitling, but retain a user's draft.
+            if (
+                previous_title != current["title"]
+                and st.session_state.get(rename_key, previous_title) == previous_title
+            ):
+                st.session_state[rename_key] = current["title"]
+            baselines[current["id"]] = current["title"]
             title = st.text_input(
-                "会话名称", value=current["title"], max_chars=80, key=f"rename_{current['id']}"
+                "会话名称", value=current["title"], max_chars=80, key=rename_key
             )
+            if title != current["title"]:
+                st.caption("当前名称：" + current["title"] + " · 新名称尚未保存")
             if st.button("重命名会话", disabled=not title.strip()):
                 services.repo.rename_session(current["id"], title)
                 st.rerun()
