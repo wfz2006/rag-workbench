@@ -59,10 +59,12 @@ class RetrievalResult(Contract):
     lexical_score: float = 0.0
     lexical_passed: bool = False
     original_page: int | None = None
+    retrieval_method: Literal["paper", "pdf_table"] | None = None
 
     @property
     def eligible(self) -> bool:
-        return self.passed_threshold or self.lexical_passed or self.context_for is not None
+        return (self.passed_threshold or self.lexical_passed or self.context_for is not None
+                or self.retrieval_method is not None)
 
 
 class EvidenceDecision(Contract):
@@ -90,6 +92,7 @@ class Inspection(Contract):
     route: AnswerMode = "general"
     reason: str = ""
     error_code: str | None = None
+    direct_answer: str | None = Field(default=None, exclude=True)
 
 
 class AnswerResult(Contract):

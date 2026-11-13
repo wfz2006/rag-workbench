@@ -6,14 +6,22 @@ from datetime import datetime, timedelta, timezone
 import streamlit as st
 
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.materials import (
+    FIELD_AVAILABILITIES,
+    OBSERVATION_ORIGINS,
+    STRUCTURED_FIELDS,
+)
 from rag_workbench.infrastructure.material_draft_store import DraftSnapshot, MaterialDraftStore
 from rag_workbench.ui import material_drafts as drafts
 
 KINDS = {"review": "记录字段", "manual": "新增候选", "json": "完整 JSON"}
+AVAILABILITY_PREFIX = "availability__"
+AVAILABILITY_FIELDS = {f"{AVAILABILITY_PREFIX}{field}" for field in STRUCTURED_FIELDS}
 EDITOR_FIELDS = {
     "material_name", "sample_label", "property_name", "value_raw", "unit_raw", "domain",
     "material_structure", "device_structure", "process", "conditions", "measurement_method",
-    "carrier", "regime", "statistic", "evidence",
+    "carrier", "regime", "statistic", "evidence", "observation_origin",
+    *STRUCTURED_FIELDS, *AVAILABILITY_FIELDS,
 }
 
 
@@ -42,6 +50,11 @@ def _recovery_issue(service, snapshot: DraftSnapshot) -> str | None:
         or (
             "domain" in snapshot.values
             and snapshot.values["domain"] not in {"ofet", "opv", "general"}
+        )
+        or snapshot.values.get("observation_origin", "") not in ("", *OBSERVATION_ORIGINS)
+        or any(
+            snapshot.values.get(field, "") not in ("", *FIELD_AVAILABILITIES)
+            for field in AVAILABILITY_FIELDS
         )
     ):
         return "草稿字段或身份格式与当前编辑区不兼容，请查看旧值后手工整理。"

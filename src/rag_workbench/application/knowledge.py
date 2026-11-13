@@ -10,6 +10,18 @@ import numpy as np
 from filelock import FileLock, Timeout
 from pydantic import ValidationError
 
+from rag_workbench.application.paper_queries import paper_question, resolve_documents
+from rag_workbench.application.paper_sources import (
+    PAPER_BUDGET,
+    PaperEvidence,
+    page_source,
+    paper_passages,
+)
+from rag_workbench.application.pdf_table_lookup import (
+    lookup_pdf_table,
+    table_lookup_requested,
+    table_samples,
+)
 from rag_workbench.application.query_features import contains_quote, question_type
 from rag_workbench.application.retrieval_expansion import (
     coverage_focus,
@@ -22,7 +34,7 @@ from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.models import Chunk, Document, ImportFailure, RetrievalResult
 from rag_workbench.domain.ports import Embedder, VectorArray
 from rag_workbench.infrastructure.chunking import split_sections
-from rag_workbench.infrastructure.lexical import BM25Index, reciprocal_rank_fusion
+from rag_workbench.infrastructure.lexical import BM25Index, identifier_text, reciprocal_rank_fusion
 from rag_workbench.infrastructure.parsing import (
     ALLOWED_EXTENSIONS,
     SUPPORTED_FORMATS_LABEL,
@@ -35,6 +47,14 @@ from rag_workbench.infrastructure.vector_store import FaissStore, normalized
 QUOTE_CONTEXT_LIMIT = 4
 
 logger = logging.getLogger(__name__)
+
+
+def _table_identifier(sample: str) -> re.Pattern[str]:
+    parts = identifier_text(sample).split("-")
+    # Some PDFs extract a printed compound identifier with spaces instead of hyphens.
+    separator = r"(?:\s*-\s*|\s+)" if len(parts) >= 3 else r"\s*-\s*"
+    form = separator.join(re.escape(part) for part in parts)
+    return re.compile(rf"(?<![a-z0-9_-]){form}(?![a-z0-9_(-])")
 
 
 class KnowledgeService:
@@ -84,6 +104,8 @@ class KnowledgeService:
             "max_upload_mb": self.settings.max_upload_mb,
             "max_text_chars": self.settings.max_text_chars,
             "max_pdf_pages": self.settings.max_pdf_pages,
+            # Keep legacy indexes readable; refresh their text when rebuilding the index.
+            "text_processing_version": 3,
         }
 
     def _raw_path(self, document: Document) -> Path:
@@ -300,7 +322,7 @@ class KnowledgeService:
                 "rebuild_failed", "重建失败，原活动版本保留，请检查原件与磁盘空间。"
             ) from exc
 
-    def delete(self, document_id: str) -> None:
+    def delete(self, document_id: str, *, require_compatible: bool = False) -> None:
         try:
             with self._locked():
                 documents = self.repo.documents()
@@ -310,6 +332,11 @@ class KnowledgeService:
                 chunks = self.repo.chunks()
                 indexed = any(c.document_id == document_id for c in chunks)
                 active = self.repo.get_state("active") or {}
+                if require_compatible:
+                    if chunks and not active:
+                        raise AppError("index_corrupt", "活动索引缺失，请先修复索引。")
+                    if active:
+                        self.store.load(active, chunks, self.signature)
                 if indexed:
                     kept, updated = self.store.without_document(active, chunks, document_id)
                     updated["limits"] = active.get("limits")
@@ -365,9 +392,9 @@ class KnowledgeService:
         if path.exists():
             path.replace(target)
 
-    def restore(self, document_id: str) -> Document:
+    def restore(self, document_id: str, *, require_compatible: bool = False) -> Document:
         try:
-            return self._restore(document_id)
+            return self._restore(document_id, require_compatible=require_compatible)
         except AppError:
             raise
         except FileNotFoundError as exc:
@@ -383,7 +410,7 @@ class KnowledgeService:
                 "restore_failed", "恢复未能完成，请检查回收目录权限与磁盘后重试。"
             ) from exc
 
-    def _restore(self, document_id: str) -> Document:
+    def _restore(self, document_id: str, *, require_compatible: bool) -> Document:
         if not re.fullmatch(r"[0-9a-f]{64}", document_id):
             raise AppError("invalid_document", "请提供完整的文档 SHA-256 ID。")
         with self._locked():
@@ -407,7 +434,8 @@ class KnowledgeService:
                 index = self.store.load(active, chunks, self.signature)
                 old_vectors = index.reconstruct_n(0, index.ntotal)
             elif active:
-                self.store.load(active, chunks, active.get("signature", ""))
+                signature = self.signature if require_compatible else active.get("signature", "")
+                self.store.load(active, chunks, signature)
             sections = parse_document(document.name, data, self.settings)
             current = split_sections(
                 document.id,
@@ -517,6 +545,117 @@ class KnowledgeService:
             page = max(pages) if pages else None
         return page is None or page <= limit
 
+    def _verified_original(self, document: Document) -> bytes:
+        path = self._raw_path(document)
+        try:
+            if path.stat().st_size != document.size:
+                raise ValueError("Original size mismatch")
+            if document.size > self.settings.max_upload_mb * 1024 * 1024:
+                raise AppError("file_too_large", "原文档超过当前文件大小上限。")
+            with path.open("rb") as stream:
+                data = stream.read(document.size + 1)
+            if len(data) != document.size or hashlib.sha256(data).hexdigest() != document.id:
+                raise ValueError("Original digest mismatch")
+        except (OSError, ValueError) as exc:
+            raise AppError(
+                "paper_original_missing", "原文档缺失或校验失败，请重新导入。",
+            ) from exc
+        return data
+
+    def paper_evidence(
+        self, question: str, *, previous_question: str | None = None,
+    ) -> PaperEvidence | None:
+        profile = paper_question(question, has_reference=True)
+        table = table_lookup_requested(question)
+        if self.settings.spoiler_max_page is not None or not (profile or table):
+            return None
+        with self._locked():
+            catalog = self.repo.documents()
+            named, ambiguous, lookup_question = resolve_documents(question, catalog)
+            table = table_lookup_requested(lookup_question)
+            if not (table or paper_question(lookup_question, has_reference=True)):
+                return None
+            samples = table_samples(lookup_question) if table else ()
+            if (
+                table and previous_question
+                and re.search(r"(?:table\s*s?\d|表\s*s?\d|该表|上表)", lookup_question, re.I)
+            ):
+                previous_docs, previous_ambiguous, previous_text = resolve_documents(
+                    previous_question, catalog
+                )
+                same_scope = not named or not previous_docs or named == previous_docs
+                if not named:
+                    named, ambiguous = previous_docs, previous_ambiguous
+                if same_scope and not samples and (samples := table_samples(previous_text)):
+                    lookup_question += "\n样品：" + "、".join(samples)
+            if ambiguous:
+                message = "同一个名称匹配到多份文档。请写明完整文件名，或重命名同名文档。"
+                return PaperEvidence(answer=message, reason=message)
+            if len(named) > 2:
+                message = "请在一次问题中指定一到两份文档。"
+                return PaperEvidence(answer=message, reason=message)
+            if any(doc.status != "ready" for doc in named):
+                message = "所问文档尚未成功导入。请在知识库管理中检查索引状态。"
+                return PaperEvidence(answer=message, reason=message)
+            if table and not named:
+                candidates = self._table_candidates(catalog, samples)
+                try:
+                    originals = [(doc, self._verified_original(doc)) for doc in candidates]
+                except AppError:
+                    return None  # Inferred candidates do not make the ordinary RAG path fail.
+            else:
+                originals = [(doc, self._verified_original(doc)) for doc in named]
+
+        if table and len(named) <= 1:
+            hits = [
+                (doc, hit) for doc, data in originals
+                if doc.extension == ".pdf"
+                and (hit := lookup_pdf_table(
+                    data, lookup_question, max_pages=self.settings.max_pdf_pages
+                )) is not None
+            ]
+            if len(hits) > 1:
+                message = "多份论文有符合条件的表格行，请在问题中指定一份论文的文件名。"
+                return PaperEvidence(answer=message, reason=message)
+            if hits:
+                doc, hit = hits[0]
+                source = page_source(doc, hit.page, hit.text, method="pdf_table")
+                reason = f"已在 {doc.name} 第 {hit.page} 页的 {hit.table_label} 定位所问表格行。"
+                return PaperEvidence([source], answer=hit.answer, reason=reason)
+
+        if not named:
+            return None
+        budget = PAPER_BUDGET // len(named)
+        passages = [
+            passage
+            for doc, data in originals
+            for passage in paper_passages(
+                doc, parse_document(doc.name, data, self.settings), budget=budget
+            )
+        ]
+        return PaperEvidence(passages)
+
+    def _table_candidates(
+        self, catalog: list[Document], samples: tuple[str, ...]
+    ) -> list[Document]:
+        ready = [doc for doc in catalog if doc.status == "ready" and doc.extension == ".pdf"]
+        if len(ready) < 2:
+            return ready
+        if not samples:
+            return []
+        chunks, _ = self._snapshot()
+        ready_ids = {doc.id for doc in ready}
+        patterns = [_table_identifier(sample) for sample in samples]
+        matches: dict[str, set[int]] = {}
+        for chunk in chunks:
+            if chunk.document_id in ready_ids:
+                text = identifier_text(chunk.text)
+                matches.setdefault(chunk.document_id, set()).update(
+                    i for i, pattern in enumerate(patterns) if pattern.search(text)
+                )
+        candidates = [doc for doc in ready if len(matches.get(doc.id, ())) == len(patterns)]
+        return candidates if len(candidates) <= 4 else []
+
     def retrieve(
         self, question: str, *, coverage_question: str | None = None
     ) -> list[RetrievalResult]:
@@ -542,11 +681,9 @@ class KnowledgeService:
                 self._lexical_cache = (chunks, BM25Index([chunk.text for chunk in chunks]))
             lexical = self._lexical_cache[1]
             lexical_scores = lexical.scores(expanded.text)
-            coverage = lexical.coverage_any(
-                coverage_queries(
-                    coverage_focus(coverage_question or question, question), self.expansions
-                )
-            )
+            focus = coverage_focus(coverage_question or question, question)
+            coverage = lexical.coverage_any(coverage_queries(focus, self.expansions))
+            mixed_matches = lexical.mixed_identifier_matches(focus)
             lexical_ranking = sorted(
                 (index for index, score in enumerate(lexical_scores) if score > 0),
                 key=lambda index: (-lexical_scores[index], index),
@@ -558,6 +695,25 @@ class KnowledgeService:
                 for index in reciprocal_rank_fusion(rankings)
                 if self._spoiler_allowed(chunks[index])
             ]
+            # Retain a matching original when Chinese notes fill the initial top-k.
+            # This path still requires the explicit compound/DOI and numeric constraints.
+            anchored_pdfs = {
+                i for i, matched in enumerate(mixed_matches)
+                if matched and self._source_catalog[chunks[i].document_id].extension == ".pdf"
+                and self._spoiler_allowed(chunks[i])
+            }
+            limit = self.settings.top_k
+            if anchored_pdfs and not anchored_pdfs.intersection(fused[:limit]):
+                best = next((i for i in fused if i in anchored_pdfs), None)
+                if best is None:
+                    best = max(anchored_pdfs, key=lambda i: (lexical_scores[i], -i))
+                fused = [*fused[:limit - 1], best, *(i for i in fused[limit - 1:] if i != best)]
+
+            def lexical_passed(index: int) -> bool:
+                return lexical_scores[index] > 0 and (
+                    coverage[index] >= self.settings.lexical_min_coverage
+                    or index in anchored_pdfs
+                )
             # Lexical-only candidates may fall outside the dense candidate pool.
             chunks_by_document: dict[str, list[Chunk]] = {}
             chunks_by_ordinal: dict[tuple[str, int], Chunk] = {}
@@ -582,10 +738,7 @@ class KnowledgeService:
                     ),
                     lexical_score=lexical_scores[index],
                     original_page=self._source_catalog[chunks[index].document_id].source_page,
-                    lexical_passed=(
-                        lexical_scores[index] > 0
-                        and coverage[index] >= self.settings.lexical_min_coverage
-                    ),
+                    lexical_passed=lexical_passed(index),
                 )
                 for index in fused[: self.settings.top_k]
             ]
@@ -620,8 +773,7 @@ class KnowledgeService:
                         context_for=seed.chunk.id,
                         original_page=self._source_catalog[chunk.document_id].source_page,
                         lexical_score=lexical_scores[index],
-                        lexical_passed=lexical_scores[index] > 0
-                        and coverage[index] >= self.settings.lexical_min_coverage,
+                        lexical_passed=lexical_passed(index),
                     )
             for seed in [item for item in primary if item.eligible]:
                 neighbors = []
@@ -687,11 +839,7 @@ class KnowledgeService:
                             context_for=seed.chunk.id,
                             original_page=source.source_page,
                             lexical_score=lexical_scores[chunk_indices[chunk.id]],
-                            lexical_passed=(
-                                lexical_scores[chunk_indices[chunk.id]] > 0
-                                and coverage[chunk_indices[chunk.id]]
-                                >= self.settings.lexical_min_coverage
-                            ),
+                            lexical_passed=lexical_passed(chunk_indices[chunk.id]),
                         )
                         remaining.append((seed, neighbors))
                         break

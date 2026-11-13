@@ -269,7 +269,8 @@ def run(bundle: Path, profile: Path, *, smoke: bool = False, smoke_external: boo
                     if not result.get("ready"):
                         raise TimeoutError("Desktop UI did not become ready.")
                     result["pages"] = []
-                    for page in ("知识库管理", "系统设置", "检索调试", "AI 聊天"):
+                    pages = ("知识库管理", "知识包", "系统设置", "检索调试", "材料文献", "AI 聊天")
+                    for page in pages:
                         page_json = json.dumps(page)
                         clicked = window.evaluate_js(
                             "(()=>{const label=[...document.querySelectorAll("
@@ -293,7 +294,9 @@ def run(bundle: Path, profile: Path, *, smoke: bool = False, smoke_external: boo
                         if not ready:
                             raise TimeoutError("Desktop page did not become ready.")
                         result["pages"].append(page)
-                    result["passed"] = result.get("errors") == 0 and len(result["pages"]) == 4
+                    result["passed"] = result.get("errors") == 0 and len(result["pages"]) == len(
+                        pages
+                    )
                     result["engine"] = webview.renderer
                 except Exception as exc:
                     result.update(passed=False, error=type(exc).__name__)

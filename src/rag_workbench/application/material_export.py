@@ -6,9 +6,11 @@ import io
 import json
 import re
 import zipfile
+from dataclasses import asdict
 
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.materials import LiteratureDocument, MaterialRecord
+from rag_workbench.infrastructure.parsing import quote_in_source
 
 
 def _rows(repo, document_id, approved_only):
@@ -45,6 +47,88 @@ def export_csv(repo, document_id=None, *, approved_only=True):
         [row.model_dump(mode="json") for row in _rows(repo, document_id, approved_only)],
         list(MaterialRecord.model_fields),
     )
+
+
+def export_analysis(repo, rows, settings, plot_rows, *, chart_spec=None, chart_files=None):
+    """Export the exact approved revisions presented in a filtered analysis view."""
+    revisions = {row.record.id: row.record.revision for row in rows}
+    if any(row.record.status != "approved" for row in rows) or any(
+        revisions.get(point["record_id"]) != point["revision"] for point in plot_rows
+    ):
+        raise AppError("material_analysis_snapshot", "图表与已批准的筛选记录版本不一致。")
+
+    papers = {row.paper.id for row in rows}
+    documents = {
+        doc.id: doc for doc in repo.documents() if doc.id in papers or doc.parent_id in papers
+    }
+    refs = {ref.block_id for row in rows for ref in row.record.evidence}
+    blocks = {
+        block.id: block for identity in documents for block in repo.blocks(identity)
+        if block.id in refs
+    }
+    record_fields = [
+        field for field in MaterialRecord.model_fields
+        if field not in {"value_normalized", "unit_normalized"}
+    ]
+    quantity_fields = ("kind", "value", "unit", "low", "high", "error", "bound")
+    observations, csv_rows, evidence_rows = [], [], []
+    for row in rows:
+        evidence = []
+        for ref in row.record.evidence:
+            block = blocks.get(ref.block_id)
+            if block is None or not quote_in_source(ref.quote, block.text):
+                raise AppError("material_export_reference", "部分字段证据已无法定位，已停止导出。")
+            source = documents[block.document_id]
+            if source.id != row.paper.id and source.parent_id != row.paper.id:
+                raise AppError("material_export_reference", "字段证据的论文归属不一致。")
+            evidence.append({
+                **ref.model_dump(), "source_id": source.id, "source_name": source.name,
+                "page": block.page, "bbox": block.bbox,
+            })
+        payload = row.record.model_dump(mode="json")
+        source_info = {"paper_id": row.paper.id, "paper_name": row.paper.name,
+                       "source_name": row.document.name}
+        analysis = {
+            "metric": row.metric.key if row.metric else None,
+            "quantity": asdict(row.value) if row.value else None,
+            "contexts": {field: asdict(value) for field, value in row.contexts.items()},
+            "comparison_key": row.comparison_key,
+            "comparison_label": row.comparison_label,
+        }
+        observations.append({
+            **source_info, "record": payload, "analysis": analysis, "evidence": evidence,
+        })
+        csv_rows.append({
+            **source_info, **payload, "analysis_metric": analysis["metric"],
+            **{f"analysis_{key}": (analysis["quantity"] or {}).get(key)
+               for key in quantity_fields},
+            "comparison_label": row.comparison_label,
+            "analysis_contexts": analysis["contexts"],
+        })
+        evidence_rows.extend({"record_id": row.record.id, **ref} for ref in evidence)
+
+    snapshot = {
+        "schema_version": 1, "settings": settings, "observations": observations,
+        "plot_rows": plot_rows,
+    }
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("analysis.json", json.dumps(snapshot, ensure_ascii=False, indent=2))
+        archive.writestr("observations.csv", _csv_bytes(
+            csv_rows, ["paper_id", "paper_name", "source_name", *record_fields, "analysis_metric",
+                       *(f"analysis_{key}" for key in quantity_fields),
+                       "comparison_label", "analysis_contexts"],
+        ))
+        archive.writestr("evidence.csv", _csv_bytes(evidence_rows, [
+            "record_id", "field", "block_id", "quote", "source_id", "source_name", "page", "bbox",
+        ]))
+        if plot_rows:
+            archive.writestr("chart-data.csv", _csv_bytes(plot_rows, list(plot_rows[0])))
+        if chart_spec is not None:
+            archive.writestr("chart.vl.json", json.dumps(chart_spec, ensure_ascii=False))
+        for name, data in (chart_files or {}).items():
+            archive.writestr(name, data)
+    return output.getvalue()
 
 
 def export_bundle(repo, document_id=None, *, approved_only=True):

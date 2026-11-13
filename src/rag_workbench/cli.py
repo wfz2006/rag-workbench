@@ -23,7 +23,11 @@ from rag_workbench.infrastructure.repository import Repository
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="RAG Workbench local tools")
-    parser.add_argument("--data-dir", type=Path, help="Override isolated workspace data directory")
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        help="Use a workspace directory (registered packs load pack settings)",
+    )
     parser.add_argument("--settings-file", type=Path, help="Explicit non-secret JSON settings")
     parser.add_argument("--pack", help="Use knowledge_packs/<PACK>/settings.json")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -120,7 +124,17 @@ def main() -> int:
             return load_pack_settings(args.pack, base=Settings(), data_dir=args.data_dir)
         if args.settings_file:
             return load_file_settings(args.settings_file, data_dir=args.data_dir)
-        return Settings(data_dir=args.data_dir) if args.data_dir else Settings()
+        if args.data_dir is None:
+            return Settings()
+        base = Settings(data_dir=args.data_dir)
+        target = base.data_dir.resolve()
+        if (
+            args.command != "reset-settings"
+            and target.parent == base.packs_data_dir.resolve()
+            and (base.packs_dir / target.name / "pack.json").is_file()
+        ):
+            return load_pack_settings(target.name, base=base, data_dir=target)
+        return base
 
     def lint_target() -> tuple[Path, Path | None]:
         base = Settings()
@@ -224,10 +238,10 @@ def main() -> int:
                 kb.rebuild()
                 output = kb.stats()
             elif args.command == "delete":
-                kb.delete(args.document_id)
+                kb.delete(args.document_id, require_compatible=True)
                 output = kb.stats()
             elif args.command == "restore":
-                output = kb.restore(args.document_id).model_dump()
+                output = kb.restore(args.document_id, require_compatible=True).model_dump()
             elif args.command == "search":
                 output = [r.model_dump() for r in kb.retrieve(args.question)]
             elif args.command == "ask":

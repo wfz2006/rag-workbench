@@ -72,9 +72,17 @@ def main() -> None:
         status = ctypes.c_ulong()
         assert kernel.GetExitCodeProcess(external_handle, ctypes.byref(status))
         assert status.value == 259, "Closing the launcher killed an external editor process"
-        with socket.socket() as connection:
-            connection.settimeout(0.5)
-            assert connection.connect_ex(("127.0.0.1", urlsplit(session["url"]).port)) != 0
+        # Windows can finish a queued loopback handshake after process termination.
+        # Like process cleanup above, wait for socket teardown before testing restart.
+        port_deadline = time.monotonic() + 10
+        while time.monotonic() < port_deadline:
+            with socket.socket() as connection:
+                connection.settimeout(0.5)
+                if connection.connect_ex(("127.0.0.1", urlsplit(session["url"]).port)) != 0:
+                    break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("Local server port stayed open after forced launcher exit")
         restarted = subprocess.Popen(command, env=env, creationflags=subprocess.CREATE_NO_WINDOW)
         try:
             assert restarted.wait(timeout=90) == 0

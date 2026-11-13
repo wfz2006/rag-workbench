@@ -11,6 +11,7 @@ from threading import Lock
 from pypdf import PdfReader
 
 from rag_workbench.domain.errors import AppError
+from rag_workbench.infrastructure.parsing import comparable_pdf_text
 
 _PDFIUM_LOCK = Lock()  # PDFium is not thread safe, including across documents.
 MAX_IMAGE_SIDE = 2400
@@ -22,6 +23,7 @@ class PreviewPage:
     png: bytes
     width: int
     height: int
+    quote_boxes: tuple[tuple[float, float, float, float], ...] = ()
 
 
 def load_original(repo, document) -> bytes:
@@ -54,7 +56,7 @@ def pdf_page_count(data: bytes) -> int:
         raise AppError("material_preview_pdf", "PDF 页信息无法读取，请检查原件。") from exc
 
 
-def render_pdf_page(data: bytes, page: int, *, scale: float = 1.0) -> PreviewPage:
+def render_pdf_page(data: bytes, page: int, *, scale: float = 1.0, quote: str = "") -> PreviewPage:
     if (
         not isinstance(page, int) or isinstance(page, bool)
         or not isinstance(scale, (int, float)) or isinstance(scale, bool)
@@ -64,11 +66,13 @@ def render_pdf_page(data: bytes, page: int, *, scale: float = 1.0) -> PreviewPag
     if not 1 <= page <= pdf_page_count(data):
         raise AppError("material_preview_range", "预览页码超出原文范围。")
     identity = hashlib.sha256(data).hexdigest()
-    return _render_cached(identity, data, page, float(scale))
+    return _render_cached(identity, data, page, float(scale), quote)
 
 
 @lru_cache(maxsize=6)
-def _render_cached(identity: str, data: bytes, page_number: int, scale: float) -> PreviewPage:
+def _render_cached(
+    identity: str, data: bytes, page_number: int, scale: float, quote: str,
+) -> PreviewPage:
     # SHA, page and scale are explicit cache dimensions. Cached data remain local.
     try:
         import pypdfium2 as pdfium
@@ -95,7 +99,8 @@ def _render_cached(identity: str, data: bytes, page_number: int, scale: float) -
             image = bitmap.to_pil()
             output = io.BytesIO()
             image.save(output, format="PNG")
-            return PreviewPage(output.getvalue(), image.width, image.height)
+            boxes = _quote_boxes(page, bitmap, quote, image.width, image.height)
+            return PreviewPage(output.getvalue(), image.width, image.height, boxes)
         except Exception as exc:
             raise AppError(
                 "material_preview_failed",
@@ -106,3 +111,48 @@ def _render_cached(identity: str, data: bytes, page_number: int, scale: float) -
                 if resource is not None:
                     with suppress(Exception):
                         resource.close()
+
+
+def _quote_boxes(page, bitmap, quote, width, height):
+    text = comparable_pdf_text(quote)
+    if not 4 <= len(text) <= 2000:
+        return ()
+    textpage = None
+    try:
+        textpage = page.get_textpage()
+        matches = set()
+        for candidate in dict.fromkeys((" ".join(quote.split()), text)):
+            search = textpage.search(candidate, match_case=True, consecutive=True)
+            try:
+                while (match := search.get_next()) is not None:
+                    if comparable_pdf_text(textpage.get_text_range(*match)) != text:
+                        continue
+                    matches.add(match)
+                    if len(matches) > 1:
+                        return ()
+            finally:
+                search.close()
+        if not matches:
+            return ()
+        count = textpage.count_rects(*matches.pop())
+        if not 1 <= count <= 64:
+            return ()
+        convert = bitmap.get_posconv(page)
+        boxes = []
+        for index in range(count):
+            left, bottom, right, top = textpage.get_rect(index)
+            points = [convert.to_bitmap(x, y) for x in (left, right) for y in (bottom, top)]
+            xs, ys = zip(*points, strict=True)
+            box = min(xs) / width, min(ys) / height, max(xs) / width, max(ys) / height
+            x0, y0, x1, y1 = box
+            if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+                return ()
+            boxes.append(box)
+        return tuple(boxes)
+    except Exception:
+        # Quote location is optional and must not prevent the original from rendering.
+        return ()
+    finally:
+        if textpage is not None:
+            with suppress(Exception):
+                textpage.close()

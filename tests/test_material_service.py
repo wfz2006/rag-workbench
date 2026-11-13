@@ -8,6 +8,7 @@ import pytest
 from rag_workbench.application.materials import MaterialsService
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.materials import EvidenceReference, MaterialRecord
 
 TEXT = b"Material OSC-A has mobility 0.25 cm2/Vs. Annealed at 100 C."
 
@@ -76,6 +77,123 @@ def test_unlocated_or_cross_document_quotes_rejected(tmp_path):
         svc.extract(doc.id)
     assert svc.repo.runs(doc.id)[0].status == "failed"
     assert svc.repo.records() == []
+
+
+def test_extract_keeps_grounded_candidates_when_a_peer_has_invalid_evidence(tmp_path):
+    class MixedResponse(ExtractionProvider):
+        def complete(self, system, user, **kwargs):
+            payload = json.loads(super().complete(system, user, **kwargs))
+            record, = payload["records"]
+            ungrounded = {**record, "value_raw": "900"}
+            return json.dumps({"records": [ungrounded, record]})
+
+    svc = service(tmp_path, MixedResponse())
+    doc = svc.ingest("paper.txt", TEXT)
+
+    run = svc.extract(doc.id)
+
+    assert (run.status, run.record_count, run.skipped_count) == ("completed", 1, 1)
+    assert svc.repo.runs(doc.id)[0].skipped_count == 1
+    row, = svc.repo.records(doc.id)
+    assert row.value_normalized == 0.25 and row.status == "candidate"
+
+
+def test_extract_omits_unquoted_optional_fields_without_weakening_approval(tmp_path):
+    class MissingOptionalEvidence(ExtractionProvider):
+        def complete(self, system, user, **kwargs):
+            payload = json.loads(super().complete(system, user, **kwargs))
+            payload["records"][0]["anneal_temperature"] = "900 C"
+            return json.dumps(payload)
+
+    svc = service(tmp_path, MissingOptionalEvidence())
+    doc = svc.ingest("paper.txt", TEXT)
+
+    run = svc.extract(doc.id)
+
+    row, = svc.repo.records(doc.id)
+    assert run.record_count == 1
+    assert row.anneal_temperature is None
+    edited = row.model_copy(update={"anneal_temperature": "900 C"})
+    with pytest.raises(AppError, match="anneal_temperature"):
+        svc.review(row.id, edited, status="approved")
+
+
+def test_extract_locates_verbatim_fields_when_the_model_only_cites_the_value(tmp_path):
+    class ValueCitationOnly:
+        def complete(self, system, user, **kwargs):
+            block, = json.loads(user)["blocks"]
+            return json.dumps({"records": [{
+                "material_name": "TEST-OSC-A",
+                "sample_label": "SYN-01",
+                "property_name": "hole mobility in saturation",
+                "value_raw": "0.42",
+                "unit_raw": "cm^2 V^-1 s^-1",
+                "evidence": [{
+                    "field": "value_raw", "block_id": block["block_id"],
+                    "quote": "Hole mobility in saturation: 0.42 cm^2 V^-1 s^-1",
+                }],
+            }]})
+
+    svc = service(tmp_path, ValueCitationOnly())
+    doc = svc.ingest(
+        "example.txt",
+        b"Material: TEST-OSC-A. Sample: SYN-01.\n"
+        b"Hole mobility in saturation: 0.42 cm^2 V^-1 s^-1 (mean of 6 devices).",
+    )
+
+    run = svc.extract(doc.id)
+
+    assert (run.status, run.record_count, run.skipped_count) == ("completed", 1, 0)
+    row, = svc.repo.records(doc.id)
+    assert {ref.field: ref.quote for ref in row.evidence} == {
+        "value_raw": "Hole mobility in saturation: 0.42 cm^2 V^-1 s^-1",
+        "material_name": "TEST-OSC-A",
+        "sample_label": "SYN-01",
+        "property_name": "Hole mobility in saturation",
+        "unit_raw": "Hole mobility in saturation: 0.42 cm^2 V^-1 s^-1",
+    }
+    assert row.property_name == "Hole mobility in saturation"
+    assert row.value_normalized == 0.42
+    assert svc.review(row.id, row, status="approved").status == "approved"
+
+
+@pytest.mark.parametrize(("source", "quote"), [
+    (
+        "Material: OSC-A. Sample: SYN-01.\nSYN-01 showed no mobility. "
+        "For reference only, OSC-B sample SYN-02 has mobility 0.42 cm2/Vs.",
+        "OSC-B sample SYN-02 has mobility 0.42 cm2/Vs.",
+    ),
+    (
+        "Material: OSC-A. Sample: SYN-01.\nFor an unrelated calibration, "
+        "voltage: 0.42 V; mobility: 0.9 cm2/Vs.",
+        "For an unrelated calibration, voltage: 0.42 V; mobility: 0.9 cm2/Vs.",
+    ),
+    (
+        "Material: OSC-A / OSC-B. Sample: SYN-01 / SYN-02.\nMobility: 0.42 cm2/Vs.",
+        "Mobility: 0.42 cm2/Vs.",
+    ),
+])
+def test_extract_does_not_reconstruct_mismatched_measurement_evidence(tmp_path, source, quote):
+    class MismatchedResponse:
+        def complete(self, system, user, **kwargs):
+            block, = json.loads(user)["blocks"]
+            return json.dumps({"records": [{
+                "material_name": "OSC-A",
+                "sample_label": "SYN-01",
+                "property_name": "mobility",
+                "value_raw": "0.42",
+                "unit_raw": "cm2/Vs",
+                "evidence": [{
+                    "field": "value_raw", "block_id": block["block_id"], "quote": quote,
+                }],
+            }]})
+
+    svc = service(tmp_path, MismatchedResponse())
+    doc = svc.ingest("example.txt", source.encode())
+
+    with pytest.raises(AppError, match="缺少可核对的证据"):
+        svc.extract(doc.id)
+    assert svc.repo.records(doc.id) == []
 
 
 def test_approval_requires_every_populated_field_evidence(tmp_path):
@@ -165,7 +283,7 @@ def test_units_case_and_duplicate_original_repair(tmp_path):
         "value_raw": "1", "unit_raw": "MV",
     })).value_normalized is None
     assert svc._normalized(row.model_copy(update={
-        "value_raw": "1", "unit_raw": "mV",
+        "property_name": "threshold voltage", "value_raw": "1", "unit_raw": "mV",
     })).value_normalized == .001
     original = svc.repo.originals / f"{doc.id}.txt"
     original.unlink()
@@ -198,3 +316,108 @@ def test_bundle_includes_historical_evidence_and_uses_one_record_snapshot(tmp_pa
         csv_rows = list(csv.DictReader(io.StringIO(z.read("measurements.csv").decode("utf-8-sig"))))
         assert [r["id"] for r in csv_rows] == [r["id"] for r in data["records"]]
     assert len(calls) == 1
+
+
+def test_typographically_equivalent_evidence_from_existing_block_can_be_approved(tmp_path):
+    svc = service(tmp_path)
+    text = "Alpha ﬁlm: field-\neﬀect mobility was 2.3 × 10⁻⁷ cm2 V−1 s−1."
+    quote = "Alpha film: field-effect mobility was 2.3 × 10^-7 cm² V⁻¹ s⁻¹."
+    doc = svc.ingest("old-extract.txt", text.encode())
+    block = svc.repo.blocks(doc.id)[0]
+    row = MaterialRecord(
+        id="old-record", document_id=doc.id, material_name="Alpha",
+        property_name="field-effect mobility", value_raw="2.3 × 10^-7", unit_raw="cm² V⁻¹ s⁻¹",
+        evidence=[EvidenceReference(field=field, block_id=block.id, quote=quote) for field in (
+            "material_name", "property_name", "value_raw", "unit_raw",
+        )],
+    )
+    saved = svc.add_record(row)
+    approved = svc.review(row.id, saved, status="approved")
+    assert approved.value_normalized == pytest.approx(2.3e-7)
+    assert approved.value_raw == "2.3 × 10^-7"
+    assert approved.evidence[0].quote == quote
+    assert svc.repo.blocks(doc.id)[0].text == text
+
+
+@pytest.mark.parametrize(("source", "value"), [
+    ("mobility −0.12", "0.12"),
+    ("mobility 2.3 × 10⁻⁷", "2.3"),
+    ("mobility 2.3 × 10⁻⁷", "2.3 × 10^-"),
+    ("mobility 2.3 × 10⁻⁷⁸", "2.3 × 10^-7"),
+    ("mobility 10−23416", "10"),
+])
+def test_numeric_evidence_rejects_partial_signed_and_scientific_numbers(tmp_path, source, value):
+    svc = service(tmp_path)
+    doc = svc.ingest("old-extract.txt", source.encode())
+    block = svc.repo.blocks(doc.id)[0]
+    row = MaterialRecord(
+        id="old-record", document_id=doc.id, material_name="Alpha",
+        property_name="mobility", value_raw=value,
+        evidence=[EvidenceReference(field="value_raw", block_id=block.id, quote=source)],
+    )
+    with pytest.raises(AppError, match="value_raw"):
+        svc.add_record(row)
+
+
+def test_trimming_a_quote_cannot_hide_the_exponent(tmp_path):
+    svc = service(tmp_path)
+    doc = svc.ingest("paper.txt", "mobility 2.3 × 10⁻⁷ cm²/Vs".encode())
+    block = svc.repo.blocks(doc.id)[0]
+    row = MaterialRecord(
+        id="record", document_id=doc.id, material_name="Alpha",
+        property_name="mobility", value_raw="2.3",
+        evidence=[EvidenceReference(field="value_raw", block_id=block.id, quote="mobility 2.3")],
+    )
+    with pytest.raises(AppError, match="value_raw"):
+        svc.add_record(row)
+
+
+def test_incompatible_unit_is_not_saved_for_a_recognized_metric(tmp_path):
+    svc = service(tmp_path)
+    doc = svc.ingest("paper.txt", b"Alpha mobility 1 mV")
+    row = MaterialRecord(
+        id="record", document_id=doc.id, material_name="Alpha",
+        property_name="mobility", value_raw="1", unit_raw="mV",
+    )
+    saved = svc.add_record(row)
+    assert saved.value_normalized is None and saved.unit_normalized is None
+
+
+def test_unit_evidence_keeps_exponent_separate_from_plain_digits(tmp_path):
+    svc = service(tmp_path)
+    source = "mobility 20 in 104 cm2/Vs"
+    doc = svc.ingest("paper.txt", source.encode())
+    block = svc.repo.blocks(doc.id)[0]
+    row = MaterialRecord(
+        id="record", document_id=doc.id, material_name="Alpha", property_name="mobility",
+        value_raw="20", unit_raw="10⁴ cm²/Vs",
+        evidence=[EvidenceReference(field="unit_raw", block_id=block.id, quote=source)],
+    )
+    with pytest.raises(AppError, match="unit_raw"):
+        svc.add_record(row)
+
+
+def test_numeric_evidence_accepts_a_unit_printed_without_a_space(tmp_path):
+    svc = service(tmp_path)
+    source = "threshold voltage −90V"
+    doc = svc.ingest("paper.txt", source.encode())
+    block = svc.repo.blocks(doc.id)[0]
+    row = MaterialRecord(
+        id="record", document_id=doc.id, material_name="Alpha",
+        property_name="threshold voltage", value_raw="−90", unit_raw="V",
+        evidence=[EvidenceReference(field="value_raw", block_id=block.id, quote=source)],
+    )
+    assert svc.add_record(row).value_normalized == -90.0
+
+
+def test_numeric_evidence_keeps_adjacent_signed_table_cells_separate(tmp_path):
+    svc = service(tmp_path)
+    source = "PY3-OTS 25 2.3 × 10⁻⁷ 4 −90"
+    doc = svc.ingest("paper.txt", source.encode())
+    block = svc.repo.blocks(doc.id)[0]
+    row = MaterialRecord(
+        id="record", document_id=doc.id, material_name="PY3-OTS",
+        property_name="on_off_ratio", value_raw="4",
+        evidence=[EvidenceReference(field="value_raw", block_id=block.id, quote=source)],
+    )
+    assert svc.add_record(row).value_normalized == 4.0

@@ -6,9 +6,32 @@ from pathlib import Path
 
 import pytest
 
-seal_release = runpy.run_path(
-    str(Path(__file__).resolve().parents[1] / "scripts/build_desktop.py")
-)["seal_release"]
+builder = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/build_desktop.py"))
+seal_release = builder["seal_release"]
+
+
+def test_runtime_export_includes_pdf_preview_without_development_dependencies(
+    tmp_path, monkeypatch
+):
+    calls = []
+    export = builder["export_requirements"]
+    monkeypatch.setitem(export.__globals__, "execute", lambda *args: calls.append(args))
+    export("uv", tmp_path / "requirements.txt")
+    command = list(calls[0])
+    extras = [command[i + 1] for i, value in enumerate(command) if value == "--extra"]
+    assert set(extras) == {"desktop", "preview"}
+    assert "--locked" in command and "--no-dev" in command
+    assert "--no-emit-project" in command
+
+
+def test_launcher_version_tracks_project_and_keeps_launch_code():
+    source = (Path(__file__).resolve().parents[1] / "desktop/Launcher.cs").read_text("utf-8")
+    updated = builder["versioned_launcher"](source, "0.1.10")
+    assert 'AssemblyVersion("0.1.10.0")' in updated
+    assert 'AssemblyFileVersion("0.1.10.0")' in updated
+    assert (
+        updated.split("static class Launcher", 1)[1] == source.split("static class Launcher", 1)[1]
+    )
 
 
 @pytest.mark.parametrize(

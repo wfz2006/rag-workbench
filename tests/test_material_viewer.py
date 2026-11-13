@@ -179,3 +179,40 @@ def test_empty_page_waits_for_input_without_hiding_original_text(monkeypatch, se
     app.number_input(key=page_key).set_value(1).run()
     assert not app.exception
     assert app.get("iframe")
+
+
+def test_text_pdf_evidence_has_localized_coordinates_without_reimport(monkeypatch, settings):
+    pytest.importorskip("pypdfium2")
+    service = MaterialsService(settings)
+    document = service.ingest(
+        "paper.pdf", pdf_bytes("First page", "Second page distinctive quote"),
+    )
+    block = service.repo.blocks(document.id)[1]
+    assert block.bbox is None  # The existing text-block schema has no measured region.
+    app = _app(monkeypatch, service, document)
+    app.session_state["materials_source_focus"] = {
+        "document_id": document.id, "block_id": block.id, "quote": "distinctive quote",
+    }
+    app.run()
+    assert not app.exception
+    assert any("橙框" in item.value for item in app.caption)
+    assert "选定证据块区域" in app.get("iframe")[0].proto.srcdoc
+    page_key = f"materials_viewer_{document.id}_page"
+    app.number_input(key=page_key).set_value(1).run()
+    assert "选定证据块区域" not in app.get("iframe")[0].proto.srcdoc
+
+
+def test_repeated_text_pdf_quote_has_no_guessed_region(monkeypatch, settings):
+    pytest.importorskip("pypdfium2")
+    service = MaterialsService(settings)
+    document = service.ingest(
+        "paper.pdf", pdf_bytes("Duplicate observation and duplicate observation"),
+    )
+    block = service.repo.blocks(document.id)[0]
+    app = _app(monkeypatch, service, document)
+    app.session_state["materials_source_focus"] = {
+        "document_id": document.id, "block_id": block.id, "quote": "observation",
+    }
+    app.run()
+    assert not app.exception
+    assert any("没有可靠的区域坐标" in item.value for item in app.caption)

@@ -4,13 +4,18 @@ import re
 import unicodedata
 import zipfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
+from hashlib import sha256
 from html.parser import HTMLParser
 from pathlib import PurePath, PurePosixPath
 from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 
-from pypdf import PdfReader
+from pypdf import PdfReader, mult
+from pypdf.errors import PdfReadError
+from pypdf.generic import DictionaryObject, NameObject
+from pypdf.generic._font import Font
 
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
@@ -28,12 +33,372 @@ XML_MAX_BYTES = 64 * 1024 * 1024
 OPF_MAX_BYTES = 4 * 1024 * 1024
 NAV_PROPERTIES = {"nav"}
 XHTML_TYPES = {"application/xhtml+xml", "text/html"}
+_PDF_LAYOUT = str.maketrans({
+    "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st",
+    "\u00ad": None, "\u200b": None, "\ufeff": None, "\u00a0": " ", "\u202f": " ",
+})
+_WRAPPED_HYPHEN = re.compile(r"(?<=[A-Za-z0-9])([-‐‑])[ \t]*\n[ \t]*(?=[A-Za-z])")
+_WRAPPED_WORD = re.compile(r"\b([a-z]{2,})-[ \t]*\n[ \t]*([a-z]{2,})\b")
+_PUBLISHER_FOOTER = re.compile(
+    r"^[ \t]*Downloaded from (?:https?://)?pubs\.acs\.org/\S+[ \t]+by [^\n]+(?:\n|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_SUPERSCRIPT = "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻"
+_SUPERSCRIPT_TO_TEXT = str.maketrans(_SUPERSCRIPT, "0123456789+-")
+_TEXT_TO_SUPERSCRIPT = str.maketrans("0123456789+-", _SUPERSCRIPT)
+# Verified embedded symbol subsets with incomplete Unicode maps. Glyph names such as /C0
+# are private to their font, so another embedded program may assign a different shape.
+_ADV_SYMBOLS = {"/C0": "−", "/C2": "×", "/C14": "°"}
+_PDF_FONT_REPAIRS = {
+    "2eb4cfa6a65188b0a7c708fc914e8eecc69f5bc5dee5171dd48a57dc3aafc056": {
+        **_ADV_SYMBOLS, "/C24": "∼",
+    },
+    "227dc13bdd9969aa68e11e4f409096d7d4d245698545c284f392a27c9b3b0777": _ADV_SYMBOLS,
+    "86c9d0a613a68f7e117022d28a9079cec826c71946cf60048c48537d981de504": _ADV_SYMBOLS,
+    "5b9f83464b18607917467839357192496eb59c4141f71293580970140861e9d8": _ADV_SYMBOLS,
+    "bae22a4dea0dec7219942f05cbfdfae3f06689fe87d6bc45a720a7d932603f52": {
+        **_ADV_SYMBOLS, "¼": "=",
+    },
+    "a8e612262b443fd94b0c84dd2ab3ce3612d796f3982f3c360e7ea275f7cc5cd1": {
+        **_ADV_SYMBOLS, "¼": "=", "½": "[", "ð": "(", "Þ": ")", "/C138": "]",
+    },
+    "664aadd3d3b8ee944f467e1e367448176f07131b0aa78e3e705a261cd5e85544": {"/C176": "°"},
+    "628f5d9e5ef162359d2558496cd473c5337879891619f3ca6d8c55a7e6bdfa06": {"/C176": "°"},
+    "497e4abef7d065a39af0a3d8a826ae86c4f655d0725ad5e5c94655f9630c220f": {"/C19": "\u0301"},
+    "3431f50fb3da954139672e7593952665492394ed48efa5b076d76391e84c23c7": {"/C19": "\u0301"},
+    "14995c9a71db1375c023f9174948fcc594575e090776e49ec64634c82cbcccc0": {
+        "/C18": "(", "/C19": ")",
+    },
+    "9c950919c4f3ab7f9ffbf1e2ad6f74d24162e3852a86013ea623cb06b588a940": {
+        "/C12": "β", "/C18": "θ", "/C22": "μ",
+    },
+    # pypdf emits three copies of the publisher's double-bond shorthand as QQQ.
+    "b2102c225ec99df53c198515413b18257f1e6cd3de8c901bb31db8df4b6b697b": {"QQQ": "Q"},
+}
+_REPAIRABLE_FONT = re.compile(r"Adv(?:P4C4E(?:74|59|46)|symbol|MTSYan|MTMI|Els-ent6)$")
+_ESCAPED_GLYPH = re.compile(r"/C[0-9]+")
 
 
 def clean_text(text: str) -> str:
     text = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n")
     text = "".join(c for c in text if c in "\n\t" or unicodedata.category(c) != "Cc")
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _pdf_layout(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"\u00ad[ \t]*\n[ \t]*", "", text)
+    text = text.translate(_PDF_LAYOUT)
+    if _WRAPPED_WORD.search(text):
+        words = set(re.findall(r"\b[A-Za-z]+\b", text.casefold()))
+
+        def join_if_attested(match: re.Match[str]) -> str:
+            joined = match[1] + match[2]
+            return joined if joined in words else match[0]
+
+        text = _WRAPPED_WORD.sub(join_if_attested, text)
+    return _WRAPPED_HYPHEN.sub(r"\1", text)
+
+
+def clean_pdf_text(text: str) -> str:
+    text = _PUBLISHER_FOOTER.sub("", _pdf_layout(text))
+    return clean_text(re.sub(r"(?m)^[ \t]+$", "", text))
+
+
+def comparable_pdf_text(text: str) -> str:
+    """Fold reversible typography for evidence matching without merging numeric tokens."""
+    text = unicodedata.normalize("NFC", _pdf_layout(text)).replace("−", "-")
+    text = re.sub(
+        rf"(?<=10)([{_SUPERSCRIPT}]+)",
+        lambda match: "^" + match[1].translate(_SUPERSCRIPT_TO_TEXT),
+        text,
+    )
+    # Canonicalize known mobility spellings while keeping the base unit and the
+    # scale. Generic NFKC would erase the difference between 10⁴ and 104.
+    text = re.sub(
+        r"(?<!\w)(cm|m)(?:[²2]|\^2)\s*[·⋅]?\s*"
+        r"V(?:⁻¹|\^?-1)\s*[·⋅]?\s*s(?:⁻¹|\^?-1)(?!\w)",
+        r"\g<1>2 V-1 s-1",
+        text,
+    )
+    text = re.sub(
+        r"(?<!\w)(cm|m)(?:[²2]|\^2)\s*/\s*(?:V\s*[·⋅]?\s*s|\(V\s*[·⋅]?\s*s\))(?!\w)",
+        r"\g<1>2/Vs",
+        text,
+    )
+    return " ".join(text.split())
+
+
+def quote_in_source(quote: str, text: str) -> bool:
+    if not quote.strip():
+        return False
+    excerpt = comparable_pdf_text(quote)
+    return bool(excerpt) and excerpt in comparable_pdf_text(text)
+
+
+def _font_repairs(font, repairs: dict[int, dict[str, str]]) -> dict[str, str]:
+    if font is None or not _REPAIRABLE_FONT.search(str(font.get("/BaseFont"))):
+        return {}
+    identity = id(font)
+    if identity not in repairs:
+        descriptor = font.get("/FontDescriptor")
+        embedded = descriptor.get_object().get("/FontFile3") if descriptor is not None else None
+        data = embedded.get_object().get_data() if embedded is not None else b""
+        repairs[identity] = _PDF_FONT_REPAIRS.get(sha256(data).hexdigest(), {})
+    return repairs[identity]
+
+
+def _repair_visitor_span(text: str, repairs: dict[str, str]) -> str:
+    if replacement := repairs.get(text.strip()):
+        return text.replace(text.strip(), replacement, 1)
+    if not repairs:
+        return text
+    # In a merged visitor span a digit may be either a glyph name suffix or normal text.
+    # Replace only whole names here. Raw operands can disambiguate more in _PdfTextRuns.
+    text = _ESCAPED_GLYPH.sub(lambda match: repairs.get(match[0], match[0]), text)
+    return "".join(repairs.get(char, char) for char in text)
+
+
+@dataclass(frozen=True, slots=True)
+class _PdfTextRun:
+    text: str
+    repairs: dict[str, str]
+    x: float
+    y: float
+    height: float
+    width: float
+
+
+class _PdfTextRuns:
+    """Read the positions pypdf sees before it coalesces PDF text operations."""
+
+    def __init__(self, page, repairs: dict[int, dict[str, str]]):
+        resources = page.get("/Resources")
+        resources = resources.get_object() if resources is not None else None
+        fonts = resources.get("/Font") if isinstance(resources, DictionaryObject) else None
+        self.fonts = fonts.get_object() if fonts is not None else {}
+        self.repairs = repairs
+        self.decoded_fonts: dict[str, Font] = {}
+        self.font = None
+        self.size = self.rise = 0.0
+        self.char_spacing = self.word_spacing = 0.0
+        self.horizontal_scale = 1.0
+        self.tm = None
+        self.advance = 0.0
+        self.stack = []
+        self.runs: list[_PdfTextRun] = []
+        self.disabled = False
+
+    def visit(self, operator, args, cm, tm):
+        if self.disabled:
+            return
+        if operator == b"Do" and args:
+            # The after-visitor is called for nested forms too. Their unrecognised
+            # text will fail the final alignment, which disables geometry for the page.
+            self.tm = None
+            return
+        if operator == b"q":
+            self.stack.append((
+                self.font, self.size, self.rise,
+                self.char_spacing, self.word_spacing, self.horizontal_scale,
+            ))
+        elif operator == b"Q" and self.stack:
+            (
+                self.font, self.size, self.rise,
+                self.char_spacing, self.word_spacing, self.horizontal_scale,
+            ) = self.stack.pop()
+        elif operator == b"Tf" and len(args) >= 2:
+            self.font, self.size = args[0], float(args[1])
+        elif operator == b"Ts" and args:
+            self.rise = float(args[0])
+        elif operator == b"Tc" and args:
+            self.char_spacing = float(args[0])
+        elif operator == b"Tw" and args:
+            self.word_spacing = float(args[0])
+        elif operator == b"Tz" and args:
+            self.horizontal_scale = float(args[0]) / 100
+        elif operator in {b"Tm", b"Td", b"TD", b"T*", b"BT", b"ET"}:
+            self.tm = None
+        elif operator in {b"Tj", b"TJ", b"'", b'"'} and args:
+            with suppress(
+                AttributeError, LookupError, NotImplementedError, PdfReadError,
+                TypeError, ValueError,
+            ):
+                self._record(args[0] if operator == b"TJ" else args[-1:], cm, tm)
+
+    def _record(self, operands, cm, tm):
+        if not isinstance(self.fonts, dict) or self.font not in self.fonts:
+            self.disabled = True
+            return
+        resource = self.fonts[self.font]
+        if self.font not in self.decoded_fonts:
+            self.decoded_fonts[self.font] = Font.from_font_resource(resource)
+        font = self.decoded_fonts[self.font]
+        a, b, c, d, x, y = mult(tm, cm)
+        horizontal = a > 0 and d > 0 and abs(b) + abs(c) < 0.001
+        height = d * self.size if horizontal else 0.0
+        scale = a * self.horizontal_scale
+        if self.tm != (a, b, c, d, x, y):
+            self.advance = 0.0
+            self.tm = a, b, c, d, x, y
+        x += self.advance
+        replacements = _font_repairs(resource, self.repairs)
+        for operand in operands:
+            if isinstance(operand, (int, float)):
+                x -= operand * scale * self.size / 1000
+                continue
+            if isinstance(operand, NameObject) or not isinstance(operand, (str, bytes)):
+                continue
+            if isinstance(operand, bytes) and isinstance(font.encoding, dict):
+                encoded = [font.encoding.get(byte, chr(byte)) for byte in operand]
+            elif isinstance(operand, bytes):
+                encoded = operand.decode(font.encoding, errors="surrogateescape")
+            else:
+                encoded = operand
+            # For one-byte encodings, preserve the exact glyph boundary of private names.
+            glyphs = [font.character_map.get(char, char) for char in encoded]
+            has_repairs = replacements and any(glyph in replacements for glyph in glyphs)
+            units = glyphs if has_repairs else ["".join(glyphs)]
+            codes = operand.decode("latin1") if isinstance(operand, bytes) else operand
+            for index, unit in enumerate(units):
+                codes_in_unit = (
+                    codes[index:index + 1] if has_repairs and len(codes) == len(units) else codes
+                )
+                width = scale * (
+                    self.size * font.get_text_width(codes_in_unit) / 1000
+                    + self.char_spacing * len(codes_in_unit)
+                    + self.word_spacing * codes_in_unit.count(" ")
+                )
+                self.runs.append(
+                    _PdfTextRun(unit, replacements, x, y + d * self.rise, height, width),
+                )
+                x += width
+        self.advance = x - self.tm[4]
+
+    def apply(self, original: str) -> str | None:
+        if not self.runs:
+            return None
+        # pypdf owns reading order and spacing. Use source geometry only when the same
+        # non-space characters line up one-for-one with its extracted text.
+        stripped = ["".join(run.text.split()) for run in self.runs]
+        offsets = [index for index, char in enumerate(original) if not char.isspace()]
+        if "".join(stripped) != "".join(original[index] for index in offsets):
+            return None
+        patches = []
+        start = 0
+        previous = None
+        raised_sign = None
+        recent = ""
+        for run, text in zip(self.runs, stripped, strict=True):
+            end = start + len(text)
+            if not text:
+                continue
+            left, right = offsets[start], offsets[end - 1] + 1
+            gap = original[offsets[start - 1] + 1:left] if start else ""
+            replacement = run.repairs.get(text, text)
+            if replacement == "\u0301":
+                # These embedded subsets draw the accent just before its base letter.
+                if (
+                    start and original[offsets[start - 1]].isalpha()
+                    and right < len(original) and original[right].isalpha() and "\n" not in gap
+                ):
+                    patches.append((left - len(gap), right + 1, original[right] + replacement))
+            else:
+                superscript = None
+                if raised_sign is not None and previous is not None and not gap:
+                    sign_start, sign = raised_sign
+                    if _same_script_line(run, previous) and re.fullmatch(r"[0-9]{1,3}", text):
+                        superscript = (sign + text).translate(_TEXT_TO_SUPERSCRIPT)
+                        if patches and patches[-1][0] == sign_start:
+                            patches.pop()
+                        patches.append((sign_start, right, superscript))
+                raised_sign = None
+                if previous is not None and "\n" not in gap and _raised(run, previous):
+                    superscript = _scientific_exponent(recent, replacement)
+                    if superscript:
+                        patches.append((left - len(gap), right, superscript))
+                    elif replacement in {"−", "-", "+"} and re.search(
+                        r"(?<![\w.])(?:10|V|s)$", recent,
+                    ):
+                        raised_sign = left, replacement.replace("−", "-")
+                if superscript is None and replacement != text:
+                    patches.append((left, right, replacement))
+            displayed = replacement if replacement != text else original[left:right]
+            recent = (recent + gap + displayed)[-80:]
+            previous = run
+            start = end
+        parts = []
+        offset = 0
+        for left, right, replacement in patches:
+            if left < offset:
+                # Overlapping glyph repairs cannot be applied independently.
+                return None
+            parts.extend((original[offset:left], replacement))
+            offset = right
+        parts.append(original[offset:])
+        return "".join(parts)
+
+
+def _raised(run: _PdfTextRun, base: _PdfTextRun) -> bool:
+    return (
+        0 < run.height <= base.height * 0.85
+        and 0.19 * base.height <= run.y - base.y <= 0.7 * base.height
+        and -0.25 * base.height <= run.x - base.x - base.width <= 0.55 * base.height
+    )
+
+
+def _same_script_line(run: _PdfTextRun, previous: _PdfTextRun) -> bool:
+    return (
+        abs(run.y - previous.y) < 0.1 * previous.height
+        and abs(run.height - previous.height) < 0.12 * previous.height
+        and abs(run.x - previous.x - previous.width) < 0.35 * previous.height
+    )
+
+
+def _scientific_exponent(recent: str, text: str) -> str | None:
+    if (
+        re.search(r"(?<![\w.])10$", recent) and re.fullmatch(r"[+−-]?[0-9]{1,3}", text)
+        or re.search(r"(?<!\w)[Vs]$", recent) and text in {"−1", "-1"}
+    ):
+        return text.replace("−", "-").translate(_TEXT_TO_SUPERSCRIPT)
+    if re.search(r"(?<![\w/])c?m$", recent) and text == "2":
+        return "²"
+    return None
+
+
+def _pdf_page_text(page, symbol_fonts: dict[int, dict[str, str]]) -> str:
+    original_parts: list[str] = []
+    parts: list[str] = []
+    raise_exponent = False
+    previous_y = None
+    runs = _PdfTextRuns(page, symbol_fonts)
+
+    def visit(text, cm, tm, font, size):
+        nonlocal raise_exponent, previous_y
+        if not text:
+            return
+        original_parts.append(text)
+        y = cm[1] * tm[4] + cm[3] * tm[5] + cm[5]
+        if raise_exponent and y == previous_y:
+            exponent = re.match(r"[0-9]+(?![.0-9])", text)
+            if exponent:
+                text = exponent[0].translate(_TEXT_TO_SUPERSCRIPT) + text[exponent.end():]
+                parts[-1] = parts[-1].replace("−", "⁻")
+        raise_exponent = False
+        repairs = _font_repairs(font, symbol_fonts)
+        repaired = _repair_visitor_span(text, repairs)
+        if repaired != text:
+            raise_exponent = (
+                repaired.strip() == "−" and previous_y is not None and y > previous_y
+                and bool(parts and re.search(r"(?<!\d)10$", parts[-1]))
+            )
+        parts.append(repaired)
+        previous_y = y
+
+    original = page.extract_text(visitor_text=visit, visitor_operand_after=runs.visit) or ""
+    if (positioned := runs.apply(original)) is not None:
+        return positioned
+    return "".join(parts) if "".join(original_parts) == original else original
 
 
 def safe_display_name(name: str) -> str:
@@ -437,12 +802,13 @@ def _parse_pdf(data: bytes, settings: Settings) -> list[Section]:
         if len(reader.pages) > settings.max_pdf_pages:
             raise AppError("too_many_pages", "PDF 页数超过限制，请拆分后上传。")
         sections: list[Section] = []
+        symbol_fonts: dict[int, dict[str, str]] = {}
         total = 0
         for i, page in enumerate(reader.pages, 1):
             content = page.get_contents()
             if content is not None and len(content.get_data()) > 20 * 1024 * 1024:
                 raise AppError("pdf_too_complex", "PDF 页面解压后过大，请简化后上传。")
-            text = clean_text(page.extract_text() or "")
+            text = clean_pdf_text(_pdf_page_text(page, symbol_fonts))
             total += len(text)
             if total > settings.max_text_chars:
                 raise AppError("text_too_large", "PDF 文本超过上限，请拆分后上传。")

@@ -10,11 +10,12 @@ from pydantic import ValidationError
 from rag_workbench.application.materials import MaterialsService
 from rag_workbench.bootstrap import Services
 from rag_workbench.domain.errors import AppError
-from rag_workbench.domain.materials import MaterialRecord
+from rag_workbench.domain.materials import STRUCTURED_FIELDS, MaterialRecord
 from rag_workbench.infrastructure.material_draft_store import MaterialDraftStore
 from rag_workbench.ui import material_drafts as drafts
+from rag_workbench.ui.material_analysis import render_material_analysis
 from rag_workbench.ui.material_evidence import evidence_editor
-from rag_workbench.ui.material_recovery import render_recovery
+from rag_workbench.ui.material_recovery import AVAILABILITY_PREFIX, render_recovery
 from rag_workbench.ui.material_viewer import render_source_viewer
 
 STATUS_LABELS = {"candidate": "待审核", "approved": "已批准", "rejected": "已拒绝"}
@@ -37,6 +38,30 @@ FIELD_LABELS = {
     "carrier": "载流子类型",
     "regime": "工作区间",
     "statistic": "统计口径",
+    "anneal_temperature": "退火温度",
+    "anneal_duration": "退火时间",
+    "deposition_method": "成膜方式",
+    "electrode": "电极",
+    "dielectric": "介电层",
+    "channel_length": "沟道长度",
+    "channel_width": "沟道宽度",
+    "measurement_environment": "测量环境",
+    "measurement_temperature": "测量温度",
+    "film_thickness": "膜厚",
+    "observation_origin": "观测来源",
+}
+AVAILABILITY_LABELS = {
+    "": "无标记",
+    "not_extracted": "尚未提取",
+    "not_reported": "原文未报告",
+    "not_applicable": "不适用",
+}
+ORIGIN_LABELS = {
+    "": "未核对",
+    "measured": "论文报告的实测值",
+    "calculated": "计算值",
+    "digitized": "图中读数",
+    "cited": "引用的其他研究结果",
 }
 IMMUTABLE_FIELDS = {"id", "document_id", "revision", "created_at", "updated_at", "status"}
 
@@ -118,6 +143,9 @@ def _manual_identity(record: MaterialRecord) -> str:
     payload = _business_payload(record)
     for field in ("value_normalized", "unit_normalized"):
         payload.pop(field, None)
+    for field in (*STRUCTURED_FIELDS, "field_availability", "observation_origin"):
+        if not payload[field]:
+            payload.pop(field)
     payload["evidence"] = sorted(
         payload["evidence"], key=lambda item: json.dumps(item, sort_keys=True),
     )
@@ -249,8 +277,13 @@ def _record_evidence(service, record, blocks) -> None:
 
 
 def _editor_defaults(defaults: dict) -> dict:
+    availability = defaults.get("field_availability", {})
     return {
         **{field: defaults.get(field) or "" for field in FIELD_LABELS},
+        **{
+            f"{AVAILABILITY_PREFIX}{field}": availability.get(field, "")
+            for field in STRUCTURED_FIELDS
+        },
         "domain": defaults.get("domain", "ofet"),
         "evidence": json.dumps(defaults.get("evidence", []), ensure_ascii=False, indent=2),
     }
@@ -317,6 +350,33 @@ def _record_form_fields(defaults: dict, prefix: str, blocks: list) -> dict:
                 )
                 or None
             )
+    with st.expander("实验字段与观测来源", key=f"{prefix}_experiment", on_change="rerun"):
+        values["observation_origin"] = st.selectbox(
+            FIELD_LABELS["observation_origin"], list(ORIGIN_LABELS),
+            format_func=ORIGIN_LABELS.get, key=f"{prefix}_observation_origin",
+            on_change=drafts.remember, args=(prefix, "observation_origin"),
+            help="按原文核对并分类。批准时请关联支持该分类的原文证据。",
+        ) or None
+        st.caption("按原文填写字段，数量须保留单位。留空时可标记缺失原因。")
+        availability = {}
+        for field in STRUCTURED_FIELDS:
+            value_column, status_column = st.columns([3, 2])
+            label = FIELD_LABELS[field]
+            values[field] = value_column.text_input(
+                label, key=f"{prefix}_{field}", max_chars=1000,
+                on_change=drafts.remember, args=(prefix, field),
+            ) or None
+            status_field = f"{AVAILABILITY_PREFIX}{field}"
+            status = status_column.selectbox(
+                f"{label}缺失原因", list(AVAILABILITY_LABELS),
+                format_func=AVAILABILITY_LABELS.get, key=f"{prefix}_{status_field}",
+                on_change=drafts.remember, args=(prefix, status_field),
+            )
+            if status:
+                availability[field] = status
+                if values[field]:
+                    st.caption(f"{label}已有值，请清除缺失标记。")
+        values["field_availability"] = availability
     evidence_editor(prefix, blocks, FIELD_LABELS)
     with st.expander("高级：字段证据 JSON", key=f"{prefix}_evidence_panel", on_change="rerun"):
         raw_evidence = st.text_area(
@@ -559,7 +619,10 @@ def _extraction(service, services, document) -> None:
             with st.spinner("正在逐批提取，结果仍需人工核对…"):
                 run = service.extract(document.id, domain=st.session_state["materials_domain"])
             if run.status == "completed":
-                _flash(f"已完成提取，生成 {run.record_count} 条候选，请核对后批准。")
+                message = f"已保存 {run.record_count} 条待核对候选。"
+                if run.skipped_count:
+                    message += f"另有 {run.skipped_count} 条未通过校验，未保存。"
+                _flash(message)
             else:
                 _flash("提取未完成，请查看任务记录；已保存的候选仍可核对。", error=True)
             st.rerun()
@@ -577,6 +640,7 @@ def _extraction(service, services, document) -> None:
                         "模型": r.model,
                         "已处理批次": f"{r.batch_completed}/{r.batch_total}",
                         "候选数": r.record_count,
+                        "未通过校验": r.skipped_count,
                         "错误码": r.error_code or "—",
                     }
                     for r in runs
@@ -592,6 +656,10 @@ def _exports(service, document) -> None:
     if not approved_only:
         st.warning("当前下载包含未审核或已拒绝记录，仅用于整理，不应直接作为训练真值。")
     st.caption("CSV 一行一项性能观测；完整包保留嵌套字段、字段证据与原文定位。")
+    st.caption(
+        "CSV 的规范值列只填写可换算的单值。范围、带误差的数值和单位不明的记录保留原文；"
+        "已批准的范围与误差可在「跨论文分析」查看和导出。"
+    )
     records = service.repo.records(document.id)
     count = sum(record.status == "approved" or not approved_only for record in records)
     st.caption(f"本次导出：{document.name} · {count} 条实验记录。")
@@ -736,13 +804,22 @@ def materials_page(services: Services) -> None:
         if not documents:
             st.info("先上传一篇论文，保留原文后再提取或手工整理实验记录。")
             return
+        document_picker = st.container()
+        review_tab, source_tab, export_tab, analysis_tab = st.tabs(
+            ["提取与核对", "原文证据", "导出", "跨论文分析"],
+            key="materials_tabs", on_change="rerun",
+        )
+        if analysis_tab.open:
+            with analysis_tab:
+                render_material_analysis(service, FIELD_LABELS)
+            return
         identities = [doc.id for doc in documents]
         if st.session_state.get("materials_selected_doc") not in identities:
             remembered = st.session_state.get("materials_document_focus")
             st.session_state["materials_selected_doc"] = (
                 remembered if remembered in identities else identities[0]
             )
-        selected = st.selectbox(
+        selected = document_picker.selectbox(
             "当前文献",
             identities,
             key="materials_selected_doc",
@@ -755,12 +832,9 @@ def materials_page(services: Services) -> None:
         )
         document = service.repo.document(selected)
         records = service.repo.records(document.id)
-        st.caption(
+        document_picker.caption(
             f"{len(documents)} 份文献 · {len(records)} 条实验记录 · "
             f"{sum(r.status == 'approved' for r in records)} 条已批准"
-        )
-        review_tab, source_tab, export_tab = st.tabs(
-            ["提取与核对", "原文证据", "导出"], key="materials_tabs", on_change="rerun",
         )
         with source_tab:
             blocks = _show_sources(service, document)

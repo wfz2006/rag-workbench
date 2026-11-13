@@ -18,3 +18,8 @@ def test_bm25_ranks_exact_term_above_unrelated():
 def test_rrf_combines_dense_and_lexical_rankings():
     fused = reciprocal_rank_fusion([[0, 1, 2], [1, 2, 0]])
     assert fused == [1, 0, 2]
+
+
+def test_digit_prefixed_article_identifiers_are_independent_terms():
+    index = BM25Index(["Article 9b02444 appeared here.", "Figure 9, row b02444"])
+    assert index.coverage("9b02444") == [1.0, 0.0]

@@ -56,7 +56,9 @@ def bounded_history(history: list[ChatMessage] | None) -> list[ChatMessage]:
     return result
 
 
-def evidence_payload(question: str, sources: list[RetrievalResult]) -> str:
+def evidence_payload(
+    question: str, sources: list[RetrievalResult], *, paper_scope: list[str] | None = None
+) -> str:
     qtype = question_type(question)
     evidence = [
         {
@@ -75,14 +77,13 @@ def evidence_payload(question: str, sources: list[RetrievalResult]) -> str:
         evidence.sort(key=lambda item: not item["contains_title"])
     elif qtype == "quote":
         evidence.sort(key=lambda item: not item["contains_quote"])
-    return json.dumps(
-        {
-            "question": question,
-            "question_type": qtype,
-            "evidence": evidence,
-        },
-        ensure_ascii=False,
-    )
+    payload = {"question": question, "question_type": qtype, "evidence": evidence}
+    scope = paper_scope or list(dict.fromkeys(
+        source.chunk.document_name for source in sources if source.retrieval_method == "paper"
+    ))
+    if scope:
+        payload["paper_scope"] = scope[0] if len(scope) == 1 else scope
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def limit_grounded_answer(answer: GroundedAnswer, question: str, settings) -> GroundedAnswer:
@@ -213,12 +214,35 @@ class RagPipeline:
                 cancellation.raise_if_cancelled()
             self._phase(on_event, "retrieving")
             retrieval_question = question.strip()
-            retrieval_question = contextual_query(retrieval_question, bounded_history(history))
-            inspection.candidates = (
-                self.knowledge.retrieve(retrieval_question, coverage_question=question.strip())
-                if retrieval_question != question.strip()
-                else self.knowledge.retrieve(retrieval_question)
-            )
+            context_history = bounded_history(history)
+            retrieval_question = contextual_query(retrieval_question, context_history)
+            # Small test adapters and non-document knowledge sources may only implement retrieve.
+            paper_evidence = getattr(self.knowledge, "paper_evidence", None)
+            paper = None
+            if paper_evidence and not self.teaching_profile:
+                previous = next(
+                    (m.content for m in reversed(context_history) if m.role == "user"), None,
+                )
+                paper = paper_evidence(question.strip(), previous_question=previous)
+            if paper is not None:
+                inspection.candidates = paper.candidates
+                if paper.answer is not None:
+                    if cancellation:
+                        cancellation.raise_if_cancelled()
+                    ids = [candidate.chunk.id for candidate in paper.candidates]
+                    inspection.route = "knowledge_base" if ids else "insufficient_evidence"
+                    inspection.reason = paper.reason
+                    inspection.evidence = EvidenceDecision(
+                        answerable=bool(ids), reason=paper.reason, supporting_chunk_ids=ids,
+                    )
+                    inspection.direct_answer = paper.answer
+                    return inspection
+            else:
+                inspection.candidates = (
+                    self.knowledge.retrieve(retrieval_question, coverage_question=question.strip())
+                    if retrieval_question != question.strip()
+                    else self.knowledge.retrieve(retrieval_question)
+                )
             if cancellation:
                 cancellation.raise_if_cancelled()
             relevant = [r for r in inspection.candidates if r.eligible]
@@ -276,7 +300,9 @@ class RagPipeline:
                     inspection.route = "knowledge_base"
                     return inspection
             inspection.route = (
-                "general" if self.knowledge.settings.allow_general else "insufficient_evidence"
+                "general"
+                if paper is None and self.knowledge.settings.allow_general
+                else "insufficient_evidence"
             )
         except AppError as exc:
             inspection.route, inspection.reason, inspection.error_code = "error", str(exc), exc.code
@@ -306,9 +332,16 @@ class RagPipeline:
                     debug=inspection,
                     error_code=inspection.error_code,
                 )
+            if inspection.direct_answer is not None:
+                refs = " ".join(f"[{item.chunk.id}]" for item in inspection.candidates)
+                answer = inspection.direct_answer
+                return AnswerResult(
+                    answer=f"{answer}\n\n{refs}" if refs else answer,
+                    mode=inspection.route, sources=inspection.candidates, debug=inspection,
+                )
             if inspection.route == "insufficient_evidence":
                 return AnswerResult(
-                    answer="当前资料不足以回答此问题，通用模型兜底已关闭。请补充文档或调整问题。",
+                    answer=self._insufficient_answer(inspection),
                     mode="insufficient_evidence",
                     debug=inspection,
                 )
@@ -335,12 +368,16 @@ class RagPipeline:
             assert inspection.evidence is not None
             support = set(inspection.evidence.supporting_chunk_ids)
             sources = [r for r in inspection.candidates if r.chunk.id in support]
+            paper_scope = list(dict.fromkeys(
+                r.chunk.document_name for r in inspection.candidates
+                if r.retrieval_method == "paper"
+            ))
             hint = self.teaching_profile and teaching_mode(question, history or []) == "hint"
             for attempt in range(2 if hint else 1):
                 self._phase(on_event, "generating_grounded")
                 text = self._generate(
                     GROUNDED_SYSTEM,
-                    evidence_payload(question, sources),
+                    evidence_payload(question, sources, paper_scope=paper_scope),
                     json_mode=True,
                     history=history,
                     on_event=on_event,
@@ -364,7 +401,7 @@ class RagPipeline:
                         )
                         inspection.route = (
                             "general"
-                            if self.knowledge.settings.allow_general
+                            if not paper_scope and self.knowledge.settings.allow_general
                             else "insufficient_evidence"
                         )
                         return self._fallback(question, history, inspection, on_event, cancellation)
@@ -413,10 +450,16 @@ class RagPipeline:
                 error_code="internal_error",
             )
 
+    @staticmethod
+    def _insufficient_answer(inspection: Inspection) -> str:
+        if any(r.retrieval_method == "paper" for r in inspection.candidates):
+            return "指定文档的已核对片段不足以回答此问题。请补充相关页或明确所问章节。"
+        return "当前资料不足以回答此问题，通用模型兜底已关闭。请补充文档或调整问题。"
+
     def _fallback(self, question, history, inspection, on_event, cancellation) -> AnswerResult:
         if inspection.route == "insufficient_evidence":
             return AnswerResult(
-                answer="当前资料不足以回答此问题，通用模型兜底已关闭。",
+                answer=self._insufficient_answer(inspection),
                 mode="insufficient_evidence",
                 debug=inspection,
             )

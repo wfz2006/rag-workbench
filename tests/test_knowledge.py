@@ -150,6 +150,21 @@ def test_incremental_ingest_reuses_unchanged_documents(settings):
     assert embedder.document_calls == []
 
 
+def test_legacy_index_stays_readable_and_can_refresh_text_processing(settings):
+    embedder = CountingEmbedder()
+    knowledge = KnowledgeService(settings, embedder)
+    doc = knowledge.ingest("a.txt", TEXT)
+    active = knowledge.repo.get_state("active")
+    active["limits"]["text_processing_version"] = 2
+    knowledge.repo.set_state("active", active)
+
+    assert knowledge.retrieve("保管")[0].chunk.document_id == doc.id
+    embedder.document_calls.clear()
+    knowledge.rebuild()
+    assert embedder.document_calls == [[TEXT.decode()]]
+    assert knowledge.retrieve("保管")[0].chunk.document_id == doc.id
+
+
 def test_duplicate_upload_repairs_missing_original(knowledge):
     document = knowledge.ingest("manual.txt", TEXT)
     raw = knowledge._raw_path(document)

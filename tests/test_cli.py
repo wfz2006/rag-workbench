@@ -2,12 +2,20 @@ import json
 
 import pytest
 
+from rag_workbench.application.knowledge import KnowledgeService
 from rag_workbench.application.packs import PackBuilder, PackSpec
+from rag_workbench.bootstrap import build_services
 from rag_workbench.cli import main, sample_workspace
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
+from rag_workbench.infrastructure.embedding import BgeEmbedder
 
 from .fakes import FakeEmbedder
+
+
+class SignedFakeEmbedder(FakeEmbedder):
+    def __init__(self, settings):
+        self.signature = BgeEmbedder(settings).signature
 
 
 def test_sample_clear_requires_marker_and_never_touches_production(tmp_path, monkeypatch):
@@ -123,8 +131,6 @@ def test_cli_lists_and_lints_knowledge_packs(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_pack_flag_uses_pack_settings_and_data(tmp_path, monkeypatch, capsys):
-    from rag_workbench.infrastructure.embedding import BgeEmbedder
-
     settings = Settings(
         _env_file=None,
         data_dir=tmp_path / "active",
@@ -135,11 +141,7 @@ def test_cli_pack_flag_uses_pack_settings_and_data(tmp_path, monkeypatch, capsys
         similarity_threshold=0.0,
     )
 
-    class SignedFakeEmbedder(FakeEmbedder):
-        def __init__(self):
-            self.signature = BgeEmbedder(settings).signature
-
-    PackBuilder(settings, SignedFakeEmbedder()).build(
+    PackBuilder(settings, SignedFakeEmbedder(settings)).build(
         PackSpec(
             pack_id="demo-pack",
             title="示例",
@@ -157,6 +159,67 @@ def test_cli_pack_flag_uses_pack_settings_and_data(tmp_path, monkeypatch, capsys
     stats = json.loads(capsys.readouterr().out)
     assert stats["documents"] == 1
     assert stats["index_status"] == "ready"
+
+
+def test_cli_data_dir_round_trips_documents_in_an_existing_pack(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_PACKS_DIR", str(tmp_path / "packs"))
+    monkeypatch.setenv("RAG_PACKS_DATA_DIR", str(tmp_path / "packs_data"))
+    monkeypatch.setenv("RAG_QUERY_INSTRUCTION", "ambient instruction")
+    settings = Settings(_env_file=None, chunk_size=400, query_instruction="pack instruction")
+    monkeypatch.setattr(
+        "rag_workbench.cli.build_services",
+        lambda config: build_services(config, embedder=SignedFakeEmbedder(config)),
+    )
+    pack = PackBuilder(settings, SignedFakeEmbedder(settings)).build(
+        PackSpec(pack_id="demo-pack", title="示例", license_status="internal_only"),
+        [
+            ("a.txt", "保管期限为三年。".encode()),
+            ("b.txt", "到期后应进行复核。".encode()),
+        ],
+    )
+
+    def run(*command):
+        monkeypatch.setattr("sys.argv", ["rag", "--data-dir", str(pack.data_dir), *command])
+        assert main() == 0
+        return json.loads(capsys.readouterr().out)
+
+    document = pack.documents[0]
+    assert run("stats")["index_status"] == "ready"
+    assert run("delete", document.id)["documents"] == 1
+    assert run("restore", document.id)["id"] == document.id
+    assert run("stats")["documents"] == 2
+    assert run("search", "保管期限")
+    explicit = tmp_path / "settings.json"
+    explicit.write_text('{"chunk_size": 300}', encoding="utf-8")
+    assert run("--settings-file", str(explicit), "stats")["index_status"] == "incompatible"
+
+
+@pytest.mark.parametrize("command", ["delete", "restore"])
+def test_cli_refuses_to_modify_an_incompatible_index(tmp_path, monkeypatch, capsys, command):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_CHUNK_SIZE", "400")
+    monkeypatch.setenv("RAG_CHUNK_OVERLAP", "60")
+    embedder = FakeEmbedder()
+    monkeypatch.setattr(
+        "rag_workbench.cli.build_services", lambda config: build_services(config, embedder=embedder)
+    )
+    settings = Settings(_env_file=None, data_dir=tmp_path / "arbitrary", chunk_size=300)
+    knowledge = KnowledgeService(settings, embedder)
+    document = knowledge.ingest("a.txt", "保管期限为三年。".encode())
+    if command == "restore":
+        # An empty, but active, generation still has a recorded configuration.
+        knowledge.delete(document.id)
+    before = knowledge.repo.get_state("active")
+    monkeypatch.setattr(
+        "sys.argv", ["rag", "--data-dir", str(knowledge.root), command, document.id]
+    )
+
+    assert main() == 1
+    assert "index_incompatible" in capsys.readouterr().err
+    assert knowledge.repo.get_state("active") == before
+    assert (knowledge.root / "originals" / f"{document.id}.txt").is_file() == (command == "delete")
+    assert (knowledge.root / "trash" / f"{document.id}.txt").is_file() == (command == "restore")
 
 
 def test_cli_pack_eval_requires_holdout_and_cost_confirmation(
@@ -199,5 +262,22 @@ def test_reset_settings_recovers_invalid_saved_config(settings, monkeypatch):
     repo = Repository(settings.data_dir / "metadata.sqlite3")
     repo.set_state("ui_settings", {"chunk_size": 100, "chunk_overlap": 500})
     monkeypatch.setattr("sys.argv", ["rag", "--data-dir", str(settings.data_dir), "reset-settings"])
+    assert main() == 0
+    assert repo.get_state("ui_settings") == {}
+
+
+def test_reset_settings_by_data_dir_does_not_require_pack_settings(tmp_path, monkeypatch):
+    from rag_workbench.infrastructure.repository import Repository
+
+    monkeypatch.setenv("RAG_PACKS_DIR", str(tmp_path / "packs"))
+    monkeypatch.setenv("RAG_PACKS_DATA_DIR", str(tmp_path / "data"))
+    pack_dir = tmp_path / "packs" / "demo-pack"
+    pack_dir.mkdir(parents=True)
+    (pack_dir / "pack.json").write_text("{}", encoding="utf-8")
+    data_dir = tmp_path / "data" / "demo-pack"
+    repo = Repository(data_dir / "metadata.sqlite3")
+    repo.set_state("ui_settings", {"chunk_size": 100, "chunk_overlap": 500})
+    monkeypatch.setattr("sys.argv", ["rag", "--data-dir", str(data_dir), "reset-settings"])
+
     assert main() == 0
     assert repo.get_state("ui_settings") == {}

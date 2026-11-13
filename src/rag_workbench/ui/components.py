@@ -5,7 +5,7 @@ import streamlit as st
 from markdown_it import MarkdownIt
 
 from rag_workbench.application.prompts import GENERAL_PREFIX
-from rag_workbench.domain.models import AnswerResult, Inspection
+from rag_workbench.domain.models import AnswerResult, Inspection, RetrievalResult
 
 MODE_LABELS = {
     "knowledge_base": "知识库回答",
@@ -88,8 +88,17 @@ def answer_presentation(result: AnswerResult) -> tuple[str, str]:
 
 def source_location(result) -> str:
     page = result.chunk.page or result.original_page
+    if result.retrieval_method == "pdf_table":
+        return f"页码 {page} · 按原 PDF 表格行列读取"
     offset = f"字符 {result.chunk.start + 1}–{result.chunk.end}"
     return f"页码 {page} · {offset}" if page else f"{offset} · 此格式无固定页码"
+
+
+def source_match(result: RetrievalResult) -> str:
+    return {
+        "paper": "指定论文原页",
+        "pdf_table": "PDF 表格匹配",
+    }.get(result.retrieval_method) or f"相似度 {result.score:.4f}"
 
 
 def inspection_panel(inspection: Inspection) -> None:
@@ -105,23 +114,26 @@ def inspection_panel(inspection: Inspection) -> None:
         st.caption("未调用证据判断：没有通过阈值的片段。")
     if not inspection.candidates:
         st.info("没有检索片段。空知识库可在允许兜底时使用通用问答。")
-    else:
+    elif all(not result.retrieval_method for result in inspection.candidates):
         st.caption("候选按向量与关键词融合排序。向量过阈值或关键词覆盖达标后，仍须核验证据。")
     for i, result in enumerate(inspection.candidates, 1):
-        status = "通过阈值" if result.passed_threshold else "低于阈值"
+        status = []
+        if not result.retrieval_method:
+            status.append("通过阈值" if result.passed_threshold else "低于阈值")
         if result.lexical_passed:
-            status += " · 关键词匹配通过"
+            status.append("关键词匹配通过")
         if result.context_for:
-            status += " · 相邻上下文"
+            status.append("相邻上下文")
         if inspection.evidence and result.chunk.id in inspection.evidence.supporting_chunk_ids:
-            status += " · 已选为支持证据"
-        with st.expander(f"候选 {i} · 相似度 {result.score:.4f} · {status}"):
+            status.append("已选为支持证据")
+        with st.expander(" · ".join([f"候选 {i}", source_match(result), *status])):
             st.text(result.chunk.document_name)
             st.caption(source_location(result))
-            st.caption(
-                f"关键词得分（BM25）：{result.lexical_score:.4f} · "
-                f"关键词准入：{'通过' if result.lexical_passed else '未通过'}"
-            )
+            if not result.retrieval_method:
+                st.caption(
+                    f"关键词得分（BM25）：{result.lexical_score:.4f} · "
+                    f"关键词准入：{'通过' if result.lexical_passed else '未通过'}"
+                )
             st.code(result.chunk.id, language=None)
             st.text(result.chunk.text)
 
@@ -155,7 +167,7 @@ def answer_panel(result: AnswerResult, show_debug: bool, body_key: str | None = 
             for i, source in enumerate(ordered_sources(result), 1):
                 st.write(f"来源 {i}")
                 st.text(source.chunk.document_name)
-                st.caption(f"相似度 {source.score:.4f} · {source_location(source)}")
+                st.caption(f"{source_match(source)} · {source_location(source)}")
                 if source.context_for:
                     st.caption("相邻上下文：分数为该片段的真实相似度，因同文档邻接关系补入。")
                 st.code(source.chunk.id, language=None)

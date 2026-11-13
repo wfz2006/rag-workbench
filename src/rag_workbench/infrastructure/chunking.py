@@ -4,6 +4,47 @@ import re
 from rag_workbench.domain.models import Chunk, Section
 
 PAGE_MARKER = re.compile(r"〔p(\d{4,6})〕")
+_PARAGRAPH_END = re.compile(r"\n[ \t]*\n")
+_SENTENCE_END = re.compile(r"""[。！？；]|[.!?;]["'”’)\]]*(?=\s)""")
+_LINE_END = re.compile(r"\n")
+_SPACE_END = re.compile(r"\s+")
+
+
+def _inside_word(text: str, offset: int) -> bool:
+    return 0 < offset < len(text) and all(
+        char.isascii() and (char.isalnum() or char == "_") for char in text[offset - 1 : offset + 1]
+    )
+
+
+def _chunk_end(text: str, start: int, end: int) -> int:
+    if end == len(text):
+        return end
+    midpoint = start + (end - start) // 2
+    # The lookahead can see whitespace just past the window, without including it.
+    for pattern in (_PARAGRAPH_END, _SENTENCE_END, _LINE_END):
+        boundaries = [
+            match.end()
+            for match in pattern.finditer(text, midpoint, end + 1)
+            if match.end() <= end
+        ]
+        if boundaries:
+            return boundaries[-1]
+    if _inside_word(text, end):
+        boundaries = list(_SPACE_END.finditer(text, midpoint, end))
+        if boundaries:
+            return boundaries[-1].end()
+    return end
+
+
+def _next_start(text: str, earliest: int, desired: int, end: int) -> int:
+    start = desired
+    while start > earliest and _inside_word(text, start):
+        start -= 1
+    if _inside_word(text, start):
+        start = desired
+        while start < end and _inside_word(text, start):
+            start += 1
+    return start
 
 
 def split_sections(
@@ -23,13 +64,7 @@ def split_sections(
         ]
         start = 0
         while start < len(section.text):
-            end = min(start + size, len(section.text))
-            if end < len(section.text):
-                boundaries = list(
-                    re.finditer(r"\n|[。！？；]", section.text[start + size // 2 : end])
-                )
-                if boundaries:
-                    end = start + size // 2 + boundaries[-1].end()
+            end = _chunk_end(section.text, start, min(start + size, len(section.text)))
             text = section.text[start:end]
             if text.strip():
                 identity = f"{document_id}:{section.page}:{start}:{size}:{overlap}:{text}"
@@ -51,5 +86,9 @@ def split_sections(
             if end == len(section.text):
                 break
             # Keep a minimum stride so near-size overlap cannot create one chunk per character.
-            start = max(start + max(1, size // 4), end - overlap)
+            earliest = start + max(1, size // 4)
+            start = (
+                _next_start(section.text, earliest, max(earliest, end - overlap), end)
+                if overlap else end
+            )
     return chunks

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from streamlit.elements.lib import policies
 from streamlit.testing.v1 import AppTest
 
 from rag_workbench.bootstrap import build_services
@@ -32,7 +33,9 @@ def _result(question, *, failed=False):
     )
 
 
-def test_first_automatic_title_updates_untouched_rename_field(settings, monkeypatch):
+def test_first_automatic_title_updates_untouched_rename_field(settings, monkeypatch, caplog):
+    monkeypatch.setattr(policies, "_shown_default_value_warning", False)
+    monkeypatch.setattr(policies._LOGGER, "propagate", True)
     app, services, session_id = _app(settings, monkeypatch)
     assert app.text_input(key=f"rename_{session_id}").value == "新会话"
     services.repo.save_turn(session_id, "新的会话主题", _result("新的会话主题"))
@@ -41,6 +44,9 @@ def test_first_automatic_title_updates_untouched_rename_field(settings, monkeypa
 
     assert not app.exception
     assert app.text_input(key=f"rename_{session_id}").value == "新的会话主题"
+    assert f'The widget with key "rename_{session_id}" was created with a default value' not in (
+        caplog.text
+    )
 
 
 def test_first_failed_turn_replacement_refreshes_rename_field(settings, monkeypatch):

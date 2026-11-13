@@ -1,13 +1,166 @@
 import io
 import zipfile
+from itertools import pairwise
 
 import pytest
 from reportlab.pdfgen import canvas
 
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.models import Section
 from rag_workbench.infrastructure.chunking import split_sections
-from rag_workbench.infrastructure.parsing import parse_document
+from rag_workbench.infrastructure.parsing import _pdf_page_text, clean_pdf_text, parse_document
+
+
+def test_pdf_cleanup_keeps_visible_hyphens_and_scientific_notation():
+    raw = (
+        "eﬃcient\u200b ﬁlms\xa0on field-\neffect\n"
+        "with 2.3 × 10⁻⁷ cm² V−1 s−1 and 10−23416.\n"
+        "Downloaded from pubs.\u200bacs.\u200borg/paper?getftrtoken=opaque by Test University\n"
+        "Use literal /C2 and sample PY3-\nOTS."
+    )
+    assert clean_pdf_text(raw) == (
+        "efficient films on field-effect\n"
+        "with 2.3 × 10⁻⁷ cm² V−1 s−1 and 10−23416.\n"
+        "Use literal /C2 and sample PY3-OTS."
+    )
+
+
+def test_pdf_cleanup_joins_hyphenation_supported_by_the_same_page():
+    text = "High mobility shows strong crys-\ntallinity. The crystallinity is reported.\n"
+    text += "Field-\neffect mobility was measured."
+    assert clean_pdf_text(text) == (
+        "High mobility shows strong crystallinity. The crystallinity is reported.\n"
+        "Field-effect mobility was measured."
+    )
+
+
+def test_pdf_private_glyphs_require_a_matching_embedded_font(monkeypatch):
+    from hashlib import sha256
+
+    from pypdf import PageObject
+    from pypdf.generic import (
+        ArrayObject,
+        DecodedStreamObject,
+        DictionaryObject,
+        NameObject,
+        NumberObject,
+    )
+
+    from rag_workbench.infrastructure import parsing
+
+    embedded = DecodedStreamObject()
+    embedded.set_data(b"fixture-font-program")
+    symbol_font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Test+AdvP4C4E74"),
+        NameObject("/Encoding"): DictionaryObject({
+            NameObject("/Differences"): ArrayObject([NumberObject(65), NameObject("/C0")]),
+        }),
+        NameObject("/FontDescriptor"): DictionaryObject({NameObject("/FontFile3"): embedded}),
+    })
+    plain_font = DictionaryObject({
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Helvetica"),
+    })
+    page = PageObject.create_blank_page(width=100, height=100)
+    page[NameObject("/Resources")][NameObject("/Font")] = DictionaryObject({
+        NameObject("/S"): symbol_font, NameObject("/P"): plain_font,
+    })
+    content = DecodedStreamObject()
+    content.set_data(b"BT 20 20 Td /S 10 Tf (A) Tj /P 10 Tf (20 and literal /C0) Tj ET")
+    page[NameObject("/Contents")] = content
+    assert _pdf_page_text(page, {}) == "/C020 and literal /C0"
+    monkeypatch.setitem(
+        parsing._PDF_FONT_REPAIRS, sha256(embedded.get_data()).hexdigest(), {"/C0": "−"},
+    )
+    assert _pdf_page_text(page, {}) == "−20 and literal /C0"
+
+
+def test_pdf_attested_span_repairs_keep_numeric_suffix_and_unknown_glyphs(monkeypatch):
+    from hashlib import sha256
+
+    from pypdf import PageObject
+    from pypdf.generic import (
+        ArrayObject,
+        DecodedStreamObject,
+        DictionaryObject,
+        NameObject,
+        NumberObject,
+    )
+
+    from rag_workbench.infrastructure import parsing
+
+    embedded = DecodedStreamObject()
+    embedded.set_data(b"fixture-symbol-font")
+    font = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Test+AdvP4C4E74"),
+        NameObject("/Encoding"): DictionaryObject({
+            NameObject("/Differences"): ArrayObject([
+                NumberObject(65), NameObject("/C0"), NameObject("/C18"),
+                NameObject("/C19"), NameObject("/C20"), NameObject("/onequarter"),
+            ]),
+        }),
+        NameObject("/FontDescriptor"): DictionaryObject({NameObject("/FontFile3"): embedded}),
+    })
+    page = PageObject.create_blank_page(width=100, height=100)
+    page[NameObject("/Resources")][NameObject("/Font")] = DictionaryObject({
+        NameObject("/S"): font,
+    })
+    content = DecodedStreamObject()
+    content.set_data(b"BT 20 20 Td /S 10 Tf (EA20 BC D A02) Tj ET")
+    page[NameObject("/Contents")] = content
+    assert _pdf_page_text(page, {}) == "¼/C020 /C18/C19 /C20 /C002"
+    monkeypatch.setitem(
+        parsing._PDF_FONT_REPAIRS, sha256(embedded.get_data()).hexdigest(),
+        {"¼": "=", "/C0": "−", "/C18": "(", "/C19": ")"},
+    )
+    assert _pdf_page_text(page, {}) == "=−20 () /C20 −02"
+
+
+def test_pdf_recovers_superscripts_from_raised_glyphs_not_flat_numbers():
+    output = io.BytesIO()
+    pdf = canvas.Canvas(output)
+    text = pdf.beginText(40, 780)
+    text.setFont("Helvetica", 10)
+    text.textOut("flat 104; ratio 10")
+    text.setFont("Helvetica", 7)
+    text.setRise(4)
+    text.textOut("4")
+    text.setFont("Helvetica", 10)
+    text.setRise(0)
+    text.textOut("; unit cm")
+    text.setFont("Helvetica", 7)
+    text.setRise(4)
+    text.textOut("2")
+    text.setFont("Helvetica", 10)
+    text.setRise(0)
+    text.textOut(" V")
+    text.setFont("Helvetica", 7)
+    text.setRise(4)
+    text.textOut("-")
+    text.textOut("1")
+    text.setFont("Helvetica", 10)
+    text.setRise(0)
+    text.textOut(" s")
+    text.setFont("Helvetica", 7)
+    text.setRise(4)
+    text.textOut("-1")
+    text.setFont("Helvetica", 10)
+    text.setRise(0)
+    text.textOut("; sample cm2; 10")
+    text.setFont("Helvetica", 7)
+    text.textOut("5")
+    pdf.drawText(text)
+    pdf.showPage()
+    pdf.save()
+
+    section, = parse_document("scientific.pdf", output.getvalue(), Settings(_env_file=None))
+    assert section.text == "flat 104; ratio 10⁴; unit cm² V⁻¹ s⁻¹; sample cm2; 105"
+
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
@@ -211,3 +364,17 @@ def test_chunking_keeps_minimum_stride_for_near_size_overlap():
     chunks = split_sections("a" * 64, "a.txt", sections, 20, 19)
     assert chunks
     assert len(chunks) <= 250
+
+
+def test_english_pdf_chunks_prefer_sentences_and_keep_word_boundaries():
+    page = "We tested three films. Received material exhibited repeatable transistor mobility."
+    chunks = split_sections("doc", "paper.pdf", [Section(text=page, page=7)], 36, 7)
+
+    assert chunks[0].text.rstrip() == "We tested three films."
+    assert chunks[-1].end == len(page)
+    for chunk in chunks:
+        assert chunk.page == 7
+        assert chunk.text == page[chunk.start : chunk.end]
+        for offset in (chunk.start, chunk.end):
+            assert not (0 < offset < len(page) and page[offset - 1:offset + 1].isalpha())
+    assert all(left.end >= right.start for left, right in pairwise(chunks))

@@ -6,18 +6,51 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+import tomllib
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_EXTRAS = ("desktop", "preview")
+
+
+def project_version() -> str:
+    return tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))["project"]["version"]
 
 
 def execute(*args: str | Path) -> None:
     subprocess.run([str(arg) for arg in args], cwd=ROOT, check=True)
+
+
+def export_requirements(uv: str, requirements: Path) -> None:
+    extra_args = [arg for extra in RUNTIME_EXTRAS for arg in ("--extra", extra)]
+    execute(
+        uv,
+        "export",
+        "--quiet",
+        "--no-header",
+        "--locked",
+        *extra_args,
+        "--no-dev",
+        "--no-emit-project",
+        "--output-file",
+        requirements,
+    )
+
+
+def versioned_launcher(source: str, version: str) -> str:
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("Desktop assembly requires a three-part numeric project version.")
+    return re.sub(
+        r'(Assembly(?:File)?Version\(")[^"]+("\))',
+        lambda match: match[1] + version + ".0" + match[2],
+        source,
+    )
 
 
 def seal_release(output: Path, *, archive: bool) -> None:
@@ -82,19 +115,7 @@ def build(output: Path, *, include_model: bool, archive: bool) -> None:
     work = ROOT / "artifacts" / f"desktop-build-{time.time_ns()}"
     work.mkdir(parents=True)
     requirements = work / "requirements.txt"
-    execute(
-        uv,
-        "export",
-        "--quiet",
-        "--no-header",
-        "--locked",
-        "--extra",
-        "desktop",
-        "--no-dev",
-        "--no-emit-project",
-        "--output-file",
-        requirements,
-    )
+    export_requirements(uv, requirements)
     shutil.copyfile(requirements, output / "requirements.lock.txt")
     execute(
         uv,
@@ -128,8 +149,10 @@ def build(output: Path, *, include_model: bool, archive: bool) -> None:
     for name in ("README.md", "ARCHITECTURE.md", "THIRD_PARTY_NOTICES.md", ".env.example"):
         shutil.copyfile(ROOT / name, resources / name)
     shutil.copytree(ROOT / "licenses", resources / "licenses")
-    shutil.copyfile(ROOT / "docs/DESKTOP.md", output / "使用说明.md")
-    shutil.copyfile(ROOT / "docs/REVIEW_ROUND9_2026-10-24.md", output / "修复说明.md")
+    shutil.copyfile(ROOT / "docs/DESKTOP_TRIAL.md", output / "使用说明.md")
+    shutil.copyfile(ROOT / "docs/DESKTOP_TRIAL.md", output / "先读我.txt")
+    shutil.copyfile(ROOT / "docs/MATERIALS_MVP.md", output / "材料文献说明.md")
+    shutil.copytree(ROOT / "examples/materials_trial", output / "试用示例")
     shutil.copyfile(ROOT / "docs/ICON_PROMPT.txt", resources / "ICON_PROMPT.txt")
     icon = ROOT / "src/rag_workbench/ui/assets/brand/workbench.ico"
     shutil.copyfile(icon, output / "workbench.ico")
@@ -141,6 +164,12 @@ def build(output: Path, *, include_model: bool, archive: bool) -> None:
                 "BGE model cache is missing; omit --include-model or download it first."
             )
         shutil.copytree(source, output / "models" / model, ignore=shutil.ignore_patterns("*.lock"))
+    version = project_version()
+    launcher = work / "Launcher.cs"
+    launcher.write_text(
+        versioned_launcher((ROOT / "desktop/Launcher.cs").read_text("utf-8"), version),
+        encoding="utf-8",
+    )
     execute(
         compiler,
         "/nologo",
@@ -151,7 +180,7 @@ def build(output: Path, *, include_model: bool, archive: bool) -> None:
         f"/win32icon:{icon}",
         f"/win32manifest:{ROOT / 'desktop/app.manifest'}",
         f"/out:{output / 'RAG Workbench.exe'}",
-        ROOT / "desktop/Launcher.cs",
+        launcher,
     )
     # Export package provenance and installed license metadata, without relying on build paths.
     execute(
@@ -174,8 +203,26 @@ def build(output: Path, *, include_model: bool, archive: bool) -> None:
         "-I",
         "-B",
         "-c",
-        "import streamlit,webview,torch,faiss,sentence_transformers,rag_workbench; "
+        "import streamlit,webview,torch,faiss,sentence_transformers,pypdfium2,rag_workbench; "
+        "import altair,vl_convert,rag_workbench.ui.app; "
         "print('Standalone runtime imports OK')",
+    )
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT))
+    (output / "BUILD_INFO.json").write_text(
+        json.dumps(
+            {
+                "version": version,
+                "base_commit": commit,
+                "local_changes": dirty,
+                "runtime_extras": list(RUNTIME_EXTRAS),
+                "public_bge_model_included": include_model,
+                "personal_data_included": False,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
     seal_release(output, archive=archive)
     print(f"Desktop ready: {output / 'RAG Workbench.exe'}")
@@ -183,7 +230,9 @@ def build(output: Path, *, include_model: bool, archive: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT / "dist/RAG-Workbench-0.1.10-win-x64")
+    parser.add_argument(
+        "--output", type=Path, default=ROOT / f"dist/RAG-Workbench-{project_version()}-win-x64"
+    )
     parser.add_argument("--include-model", action="store_true")
     parser.add_argument("--zip", action="store_true")
     args = parser.parse_args()

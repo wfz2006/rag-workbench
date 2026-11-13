@@ -1,6 +1,6 @@
 """Versioned literature facts, kept separate from the conversation/RAG schema."""
 
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, get_args
 
 from pydantic import Field, field_validator, model_validator
 
@@ -9,10 +9,20 @@ from rag_workbench.domain.models import Contract, utc_now
 SourceId = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 EntityId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")]
 Domain = Literal["ofet", "opv", "general"]
+StructuredField = Literal[
+    "anneal_temperature", "anneal_duration", "deposition_method", "electrode", "dielectric",
+    "channel_length", "channel_width", "measurement_environment", "measurement_temperature",
+    "film_thickness",
+]
+FieldAvailability = Literal["not_reported", "not_applicable", "not_extracted"]
+ObservationOrigin = Literal["measured", "calculated", "digitized", "cited"]
+STRUCTURED_FIELDS = get_args(StructuredField)
+FIELD_AVAILABILITIES = get_args(FieldAvailability)
+OBSERVATION_ORIGINS = get_args(ObservationOrigin)
 EvidenceField = Literal[
     "material_name", "sample_label", "property_name", "value_raw", "unit_raw",
     "material_structure", "device_structure", "process", "conditions",
-    "measurement_method", "carrier", "regime", "statistic",
+    "measurement_method", "carrier", "regime", "statistic", StructuredField, "observation_origin",
 ]
 
 
@@ -83,6 +93,18 @@ class MaterialRecord(Contract):
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
+    anneal_temperature: str | None = Field(default=None, max_length=1000)
+    anneal_duration: str | None = Field(default=None, max_length=1000)
+    deposition_method: str | None = Field(default=None, max_length=1000)
+    electrode: str | None = Field(default=None, max_length=1000)
+    dielectric: str | None = Field(default=None, max_length=1000)
+    channel_length: str | None = Field(default=None, max_length=1000)
+    channel_width: str | None = Field(default=None, max_length=1000)
+    measurement_environment: str | None = Field(default=None, max_length=1000)
+    measurement_temperature: str | None = Field(default=None, max_length=1000)
+    film_thickness: str | None = Field(default=None, max_length=1000)
+    field_availability: dict[StructuredField, FieldAvailability] = Field(default_factory=dict)
+    observation_origin: ObservationOrigin | None = None
 
     @field_validator("material_name", "property_name", "value_raw")
     @classmethod
@@ -91,6 +113,17 @@ class MaterialRecord(Contract):
         if not value:
             raise ValueError("必填字段不能仅包含空白。")
         return value
+
+    @field_validator(*STRUCTURED_FIELDS)
+    @classmethod
+    def optional_excerpt(cls, value: str | None) -> str | None:
+        return (value.strip() or None) if value is not None else None
+
+    @model_validator(mode="after")
+    def availability_matches_excerpt(self) -> Self:
+        if any(getattr(self, field) is not None for field in self.field_availability):
+            raise ValueError("有原文值的字段不能同时标记为未报告、不适用或尚未提取。")
+        return self
 
 
 class ExtractionRun(Contract):
@@ -102,6 +135,7 @@ class ExtractionRun(Contract):
     batch_total: int = Field(default=0, ge=0)
     batch_completed: int = Field(default=0, ge=0)
     record_count: int = Field(default=0, ge=0)
+    skipped_count: int = Field(default=0, ge=0)
     error_code: str | None = Field(default=None, max_length=160)
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)

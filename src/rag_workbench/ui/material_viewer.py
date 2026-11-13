@@ -10,6 +10,7 @@ from rag_workbench.infrastructure.material_preview import (
     pdf_page_count,
     render_pdf_page,
 )
+from rag_workbench.infrastructure.parsing import quote_in_source
 
 
 def _choose_block(prefix, blocks):
@@ -23,15 +24,14 @@ def _choose_block(prefix, blocks):
 def _page_html(preview, zoom, bbox=None) -> str:
     # Only rendered PNG and validated numeric geometry enter this local frame.
     encoded = base64.b64encode(preview.png).decode("ascii")
-    overlay = ""
-    if bbox:
-        x0, y0, x1, y1 = bbox
-        overlay = (
-            '<div aria-label="选定证据块区域" style="position:absolute;pointer-events:none;'
-            f'left:{x0 * 100}%;top:{y0 * 100}%;width:{(x1 - x0) * 100}%;'
-            f'height:{(y1 - y0) * 100}%;box-sizing:border-box;'
-            'border:2px solid #c6613f;background:#c6613f22"></div>'
-        )
+    boxes = preview.quote_boxes or ((bbox,) if bbox else ())
+    overlay = "".join(
+        '<div aria-label="选定证据块区域" style="position:absolute;pointer-events:none;'
+        f'left:{x0 * 100}%;top:{y0 * 100}%;width:{(x1 - x0) * 100}%;'
+        f'height:{(y1 - y0) * 100}%;box-sizing:border-box;'
+        'border:2px solid #c6613f;background:#c6613f22"></div>'
+        for x0, y0, x1, y1 in boxes
+    )
     return (
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -72,7 +72,7 @@ def render_source_viewer(service, document, blocks, *, key_prefix="materials_vie
         quote = requested.get("quote") or ""
         if (
             block is None or requested.get("document_id") != block.document_id
-            or not isinstance(quote, str) or quote not in block.text
+            or not isinstance(quote, str) or not quote_in_source(quote, block.text)
         ):
             st.warning("所选证据不属于当前论文及补充材料，未切换原文。")
         else:
@@ -103,6 +103,9 @@ def render_source_viewer(service, document, blocks, *, key_prefix="materials_vie
         block = allowed_blocks[identity]
     else:
         block = None
+    quote = st.session_state.get(f"{prefix}_quote", "")
+    if block is None or not isinstance(quote, str) or not quote_in_source(quote, block.text):
+        quote = ""
     st.caption(f"原件：{source.name}")
     try:
         data = load_original(service.repo, source)
@@ -133,10 +136,16 @@ def render_source_viewer(service, document, blocks, *, key_prefix="materials_vie
                 if page is None:
                     st.info(f"请输入 1–{count} 之间的 PDF 页码；下方原文仍可核对。")
                 else:
-                    preview = render_pdf_page(data, int(page), scale=zoom / 100 * 1.2)
-                    bbox = block.bbox if block and block.page == page else None
+                    selected_block = block if block and block.page == page else None
+                    bbox = selected_block.bbox if selected_block else None
+                    excerpt = (quote or selected_block.text) if selected_block else ""
+                    preview = render_pdf_page(
+                        data, int(page), scale=zoom / 100 * 1.2, quote=excerpt,
+                    )
                     st.iframe(_page_html(preview, zoom, bbox), height=620, alt="PDF 原始页面")
-                    if bbox:
+                    if preview.quote_boxes:
+                        st.caption("橙框标出 PDF 文字层中匹配的位置。")
+                    elif bbox:
                         st.caption("橙框为解析器提供的证据块区域，并非逐字引文框。")
                     else:
                         st.caption("当前页没有可靠的区域坐标；仅按原页及下方引文核对。")
@@ -149,7 +158,7 @@ def render_source_viewer(service, document, blocks, *, key_prefix="materials_vie
             mime="application/pdf" if source.extension == ".pdf" else "text/plain",
             key=f"{prefix}_download", on_click="ignore",
         )
-    if (quote := st.session_state.get(f"{prefix}_quote")) and block and quote in block.text:
+    if quote:
         st.caption("所选字段引文")
         st.text(quote)
     if block:

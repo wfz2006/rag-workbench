@@ -4,6 +4,7 @@ import json
 
 import streamlit as st
 
+from rag_workbench.infrastructure.parsing import quote_in_source
 from rag_workbench.ui.material_drafts import set_field
 
 
@@ -27,8 +28,8 @@ def _add(prefix, blocks):
     block = blocks[st.session_state[f"{prefix}_source"]]
     quote = st.session_state[f"{prefix}_quote"]
     fields = st.session_state[f"{prefix}_fields"]
-    if not fields or not quote.strip() or quote not in block.text:
-        _message(prefix, "请选择字段，并保留一段与所选原文完全一致的引文。")
+    if not fields or not quote_in_source(quote, block.text):
+        _message(prefix, "请选择字段，并确保引文与所选原文的文字和数值完全一致。")
         return
     for field in fields:
         entry = {"field": field, "block_id": block.id, "quote": quote}

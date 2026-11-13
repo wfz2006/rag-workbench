@@ -2,7 +2,7 @@
 
 ## Windows 桌面便携版
 
-当前版本 0.1.10，Windows 便携版见 [Releases](https://github.com/wfz2006/rag-workbench/releases)。上一轮记录见 [第九轮优化与发布记录](docs/REVIEW_ROUND9_2026-10-24.md)。本轮修复安全校验、删除回滚、增量索引、检索缓存、亮色对比度与窄屏布局；历史记录：[0.1.8](docs/REVIEW_ROUND8_2026-10-24.md)、[0.1.7](docs/REVIEW_ROUND7_2026-10-24.md)、[0.1.6](docs/REVIEW_ROUND6_2026-10-24.md)、[0.1.5](docs/REVIEW_ROUND5_2026-10-24.md)、[0.1.4](docs/REVIEW_ROUND4_2026-10-24.md)、[0.1.3](docs/REVIEW_ROUND3_2026-10-24.md)、[0.1.2](docs/REVIEW_ROUND2_2026-10-24.md)、[0.1.1](docs/REVIEW_2026-10-24.md)。
+当前 Windows 本地试用版为 0.1.12，包含跨论文分析、指定论文问答和本地 PDF 表格查询。已发布的历史版本见 [Releases](https://github.com/wfz2006/rag-workbench/releases)。上一轮记录见 [第九轮优化与发布记录](docs/REVIEW_ROUND9_2026-10-24.md)。历史记录：[0.1.8](docs/REVIEW_ROUND8_2026-10-24.md)、[0.1.7](docs/REVIEW_ROUND7_2026-10-24.md)、[0.1.6](docs/REVIEW_ROUND6_2026-10-24.md)、[0.1.5](docs/REVIEW_ROUND5_2026-10-24.md)、[0.1.4](docs/REVIEW_ROUND4_2026-10-24.md)、[0.1.3](docs/REVIEW_ROUND3_2026-10-24.md)、[0.1.2](docs/REVIEW_ROUND2_2026-10-24.md)、[0.1.1](docs/REVIEW_2026-10-24.md)。
 
 桌面版双击 RAG Workbench.exe 启动，无需终端或系统 Python；API Key 与资料保存在独立 user-data 中。
 安装、配置和可复现打包命令见 [桌面版说明](docs/DESKTOP.md)。
@@ -99,6 +99,10 @@ DEEPSEEK_API_KEY=your-real-key
 EPUB 和 HTML；PDF 需要已有文本层。单文件默认 20 MB，最多 300 页 PDF、提取文本最多 200 万字符。
 加密、损坏、空文档与无文本扫描 PDF 会明确报错，不生成无效索引；不提供 OCR，也不支持旧式 `.doc`。
 
+在 AI 聊天中可用文件名或完整文件名主干指定已导入的文档，例如“请总结薄膜文献1，给出作者、DOI、方法和结论”，也可以指定两份文档进行对比。工作台会取首页、主要章节和正文片段，按实际证据回答并引用来源。
+
+可按样品、温度和测量条件查询带文本层的 PDF 表格，同一次可问迁移率、阈值电压和开关比。此查询使用本地 PDFium（桌面包内置，源码运行可安装 `preview` 依赖）。行列和条件能核对时直接显示原表数据和页码，其余情况走资料问答。
+
 同内容（SHA-256）不会重复入库；同名不同内容保留为不同文档。原件按安全 ID 保存。
 首次索引会下载真实 BGE 模型到 `.cache/models`，后续进程和页面刷新复用缓存。
 无密钥时向量检索依然可用，它不依赖 LLM API。
@@ -112,6 +116,7 @@ CLI 可恢复保留的原件（用完整文档 ID）：
 
 失败上传留 `failed` 元数据和原件，排除故障后点“重新建立索引”。索引损坏或配置不兼容会阻止检索，
 并提示重建；不会偷偷改成通用问答。旧索引快照保留供恢复分析，旧聊天保留当时来源文本。
+已有索引可以继续使用。要让已入库的 PDF 应用新的文本清洗和分块规则，可在知识库管理点“重新建立索引”。
 
 ## 知识包构建（P1 草稿）
 
