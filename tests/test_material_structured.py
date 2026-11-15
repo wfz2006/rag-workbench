@@ -85,6 +85,7 @@ def test_structured_values_keep_supplement_evidence_and_reject_partial_quantity(
     ("statistic", "min", "最低迁移率为 0.25。", "最低迁移率"),
     ("carrier", "hole", "The carriers were holes.", "holes"),
     ("regime", "linear", "Mobility was measured in the ohmic regime.", "ohmic regime"),
+    ("regime", "saturation", "Hole mobility in saturation: 0.42 cm² V⁻¹ s⁻¹.", "saturation"),
     ("statistic", "median of six", "The median of six devices was 0.25.", "median of six"),
 ])
 def test_classification_evidence_preserves_the_entered_value(settings, field, value, source, quote):

@@ -312,7 +312,9 @@ _QUALIFIED_EXTREME = re.compile(
     r"|\b(?:one of|among) the (?:highest|lowest)\b|次[高低]",
     re.I,
 )
-_REGIME_CONTEXT = re.compile(r"^\s*(?:(?:regime|region|mobility|operation)\b|\W*$)", re.I)
+_REGIME_CONTEXT = re.compile(
+    r"^\s*(?:(?:regime|region|mobility|operation)\b|[:=,，;；/]\s*|\W*$)", re.I
+)
 
 
 def _term_pattern(term: str) -> str:
