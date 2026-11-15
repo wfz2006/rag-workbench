@@ -11,7 +11,7 @@ from rag_workbench.application.prompts import EVIDENCE_SYSTEM
 from rag_workbench.domain.models import ChatMessage, Document, Section
 
 from .fakes import FakeProvider
-from .test_pdf_table_lookup import ruled_table
+from .test_pdf_table_lookup import pdfium, ruled_table
 
 
 def paper(*pages):
@@ -78,7 +78,7 @@ def test_table_question_uses_only_verified_pdf_and_cites_exact_page(knowledge, m
         return SimpleNamespace(page=1, text="Table 1\nPY3-OTS 25 C 2.3e-7",
                                answer="25 °C：2.3 × 10⁻⁷", table_label="Table 1")
 
-    monkeypatch.setattr("rag_workbench.application.knowledge.lookup_pdf_table", lookup)
+    monkeypatch.setattr("rag_workbench.application.knowledge.inspect_pdf_table", lookup)
     previous = [ChatMessage(role="user", content="PY3-OTS 在不同温度下的迁移率是多少？")]
     result = RagPipeline(knowledge, object()).answer(
         "根据 Table 1 回答不同温度下的迁移率", previous,
@@ -160,7 +160,7 @@ def test_table_lookup_uses_both_sample_names_to_find_unnamed_paper(knowledge, mo
         scanned.append(data)
         return None
 
-    monkeypatch.setattr("rag_workbench.application.knowledge.lookup_pdf_table", lookup)
+    monkeypatch.setattr("rag_workbench.application.knowledge.inspect_pdf_table", lookup)
     assert knowledge.paper_evidence(
         "para-IDT(QNCN)2 和 meta-IDT(QNCN)2 的线性与饱和迁移率对比"
     ) is None
@@ -179,7 +179,7 @@ def test_table_lookup_finds_unnamed_paper_with_space_separated_compound_id(
         scanned.append(data)
         return None
 
-    monkeypatch.setattr("rag_workbench.application.knowledge.lookup_pdf_table", lookup)
+    monkeypatch.setattr("rag_workbench.application.knowledge.inspect_pdf_table", lookup)
     knowledge.paper_evidence("TCNBT-Th-IDT 在所有条件下的饱和电子平均迁移率是多少？")
 
     assert scanned == [targeted]
@@ -213,11 +213,79 @@ def test_table_followup_keeps_the_previously_named_paper(knowledge):
 
     evidence = knowledge.paper_evidence(
         "根据 Table 1 告诉我60℃的迁移率",
-        previous_question="first-study.pdf 里的 D42-OTS 在60℃的迁移率是多少？",
+        previous_questions=("first-study.pdf 里的 D42-OTS 在60℃的迁移率是多少？",),
     )
 
     assert evidence.answer is None
     assert {r.chunk.document_name for r in evidence.candidates} == {"first-study.pdf"}
+
+
+def test_short_table_followups_keep_scope_and_replace_only_the_requested_part(knowledge):
+    knowledge.ingest_many([
+        ("薄膜文献1.pdf", ruled_table()),
+        ("other-study.pdf", paper(["Other D42-OTS and D42-Bare results"])),
+    ])
+    pipeline = RagPipeline(knowledge, object())
+    history = []
+    for question, expected in [
+        ("薄膜文献1里 D42-OTS 在 25 ℃ 的迁移率", ("| 25 °C | 2.8 × 10⁻⁷",)),
+        ("那 60 度呢", ("| 60 °C | 3.5 × 10⁻³",)),
+        ("阈值电压呢", ("| 60 °C | −8",)),
+        ("和 D42-Bare 比呢", ("D42-OTS | 60 °C | −8", "D42-Bare | 60 °C | −10")),
+        ("迁移率呢", ("D42-OTS | 60 °C | 3.5 × 10⁻³", "D42-Bare | 60 °C | 0.06")),
+    ]:
+        result = pipeline.answer(question, history)
+        assert result.mode == "knowledge_base", result.answer
+        assert result.sources[0].chunk.document_name == "薄膜文献1.pdf"
+        assert result.sources[0].retrieval_method == "pdf_table"
+        assert "D42-OTS" in result.answer
+        assert all(line in result.answer for line in expected), (question, result.answer)
+        if history:
+            assert "25 °C" not in result.answer
+        history += [
+            ChatMessage(role="user", content=question),
+            ChatMessage(role="assistant", content="一些旧答案，其中数字不应作为检索条件。"),
+        ]
+
+
+def test_titles_scope_retrieval_debug_and_chat_including_note_summaries(knowledge):
+    knowledge.ingest_many([
+        ("薄膜文献1.pdf", ruled_table()),
+        ("文献2整理.txt", "这份记录总结了晶格和器件结构。".encode()),
+        ("文献2.pdf", paper(["Similar filename, unrelated experiment."])),
+        ("an-internal-note.txt", "开关比 讨论 记录了关键数据和要点。".encode()),
+    ])
+    for question, name in [
+        ("薄膜文献1 里 Table 1 的开关比怎么查", "薄膜文献1.pdf"),
+        ("文献2整理里记了哪些关键数据", "文献2整理.txt"),
+    ]:
+        hits = knowledge.retrieve(question)
+        assert hits and all(hit.eligible and hit.chunk.document_name == name for hit in hits)
+        result = RagPipeline(knowledge, FakeProvider()).inspect(question)
+        assert {r.chunk.document_name for r in result.candidates} == {name}
+
+
+def test_verified_table_ambiguity_asks_to_specify_table_instead_of_calling_model(knowledge):
+    stream = io.BytesIO()
+    with (
+        pdfium.PdfDocument.new() as result,
+        pdfium.PdfDocument(ruled_table()) as first,
+        pdfium.PdfDocument(ruled_table(table_number=2)) as second,
+    ):
+        result.import_pages(first)
+        result.import_pages(second)
+        result.save(stream)
+    knowledge.ingest("comparison-study.pdf", stream.getvalue())
+    pipeline = RagPipeline(knowledge, object())
+
+    answer = pipeline.answer("D42-OTS 在 60 度下的迁移率")
+    assert answer.mode == "insufficient_evidence"
+    assert "第 1 页 Table 1" in answer.answer and "第 2 页 Table 2" in answer.answer
+    assert "请明确表号" in answer.answer and not answer.sources
+
+    clarified = pipeline.answer("Table 2 里 D42-OTS 在 60 度下的迁移率")
+    assert clarified.mode == "knowledge_base"
+    assert clarified.sources[0].chunk.page == 2
 
 
 def test_heading_free_paper_samples_results_and_late_body():

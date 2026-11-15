@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+from rag_workbench.application.query_features import material_followup
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.models import ChatMessage, GroundedAnswer
 
@@ -90,7 +91,9 @@ def is_followup(question: str) -> bool:
     if re.search(r"换个话题|另外一个问题|什么是|何为", question):
         return False
     question = followup_core(question)
-    if re.fullmatch(r"那[^，。？！!?]{1,12}呢[？?]?", question.strip()):
+    if material_followup(question) or re.fullmatch(
+        r"那[^，。？！!?]{1,12}呢[？?]?", question.strip()
+    ):
         return True
     return bool(
         re.match(

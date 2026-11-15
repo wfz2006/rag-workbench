@@ -13,6 +13,7 @@ _PAPER_REFERENCE = re.compile(
 _PAPER_INTENT = re.compile(
     r"总结|概括|概述|概览|概况|综述|结构化|主要(?:讲|研究|内容|发现|结论)|"
     r"(?:讲|说|写)了(?:什么|啥)|内容是(?:什么|啥)|对比|比较|区别|结论|实验方法|"
+    r"要点|关键(?:数据|信息|发现)|(?:记|写|整理)了哪些|"
     r"标题|题目|作者|年份|发表(?:时间|日期)|材料体系|选材|选择(?:理由|原因)|"
     r"(?<!数据)结构(?!体)|薄膜|器件|性能|迁移率|开关比|阈值电压|"
     r"\b(?:summari[sz]e|summary|overview|profile|titles?|authors?|year|doi|"
@@ -129,13 +130,19 @@ def resolve_documents(
             if not literal:
                 continue
             needs_quotes = len(literal) < 3 or _GENERIC_STEM.fullmatch(literal) is not None
+            # A Chinese catalog label such as 薄膜文献1 can contain numbers that
+            # are not experimental conditions. An unqualified sample-like stem
+            # (e.g. D42-OTS) may instead be both a file label and a sample name.
+            mask_label = (literal == name and extension and name.endswith(extension)) or any(
+                _is_han(char) for char in literal
+            )
             for match in re.finditer(re.escape(literal), folded):
                 start, end = match.span()
                 if needs_quotes and not _quoted(folded, start, end):
                     continue
                 if _literal_boundary(folded, start, end, literal):
                     spans.append((start, end, document.id))
-                    if literal == name and extension and name.endswith(extension):
+                    if mask_label:
                         source_labels.add((start, end))
         # Both parts must occur in a known filename form; surnames alone are ambiguous.
         author_year = _NAME_YEAR.match(stem)

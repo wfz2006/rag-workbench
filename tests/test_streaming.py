@@ -92,6 +92,28 @@ def test_pipeline_general_emits_real_deltas_and_final_answer(knowledge):
     assert result.mode == "general"
 
 
+def test_general_claim_envelope_displays_plain_text_including_streaming(knowledge):
+    body = json.dumps({"claims": [{"text": "没有相关信息。", "chunk_ids": ["unverified"]}]})
+
+    class Structured(StreamingProvider):
+        def complete(self, *args, **kwargs):
+            return body
+
+        def stream(self, *args, **kwargs):
+            yield body[:2]
+            yield body[2:18]
+            yield body[18:]
+
+    pipeline = RagPipeline(knowledge, Structured())
+    events = []
+    result = pipeline.answer("你好", on_event=events.append)
+    expected = "通用模式 · 本回答不是来自知识库。\n\n没有相关信息。"
+    assert result.answer == pipeline.answer("你好").answer == expected
+    assert "".join(event.text for event in events if event.kind == "delta") == expected
+    assert not result.sources
+    assert pipeline.answer("请以 JSON 格式给出答案").answer.endswith(body)
+
+
 def test_grounded_invalid_future_citation_never_emits_unvalidated_text(knowledge):
     knowledge.ingest("manual.txt", TEXT)
 

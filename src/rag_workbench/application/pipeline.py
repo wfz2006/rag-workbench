@@ -36,6 +36,42 @@ from rag_workbench.domain.models import (
 from rag_workbench.domain.ports import Cancellation, ChatProvider
 
 logger = logging.getLogger(__name__)
+_JSON_REQUEST = re.compile(
+    r"(?:输出|返回|给出|提供|格式|转为|转成)[^\n。]{0,18}\bJSON\b|"
+    r"\bJSON\b[^\n。]{0,18}(?:格式|输出|结构|示例|样例)|"
+    r"\b(?:as|in|return|output|generate|example)\s+(?:an?\s+)?json\b",
+    re.I | re.ASCII,
+)
+_JSON_FENCE_STARTS = tuple("\x60" * 3 + tail for tail in ("json", "\n", "\r\n"))
+
+
+def _general_prose(response: str) -> str:
+    """Unwrap only the app's claim envelope if it leaked into plain-text mode."""
+    candidate = re.fullmatch(
+        r"\s*\x60{3}(?:json)?[ \t]*\r?\n(.*?)\r?\n\x60{3}\s*", response,
+        flags=re.I | re.S,
+    )
+    body = candidate[1] if candidate else response
+    if not body.lstrip().startswith("{"):
+        return response
+    try:
+        value = json.loads(body)
+    except (ValueError, RecursionError):
+        return response
+    if not isinstance(value, dict) or set(value) != {"claims"}:
+        return response
+    claims = value["claims"]
+    if not isinstance(claims, list) or any(
+        not isinstance(claim, dict)
+        or set(claim) != {"text", "chunk_ids"}
+        or not isinstance(claim["text"], str)
+        or not isinstance(claim["chunk_ids"], list)
+        for claim in claims
+    ):
+        return response
+    return "\n\n".join(claim["text"].strip() for claim in claims if claim["text"].strip()) or (
+        "模型未提供可用的正文，请换一种问法后重试。"
+    )
 
 
 def bounded_history(history: list[ChatMessage] | None) -> list[ChatMessage]:
@@ -168,11 +204,14 @@ class RagPipeline:
         system += repair_instruction
         if cancellation:
             cancellation.raise_if_cancelled()
+        unwrap = base_system == GENERAL_SYSTEM and not _JSON_REQUEST.search(task_question)
         if on_event is None:
-            return self.provider.complete(
+            response = self.provider.complete(
                 system, user, json_mode=json_mode, history=bounded_history(history)
             )
+            return _general_prose(response) if unwrap else response
         pieces = []
+        output = "detect" if unwrap and visible else "stream"
         stream = self.provider.stream(
             system,
             user,
@@ -185,7 +224,16 @@ class RagPipeline:
                 if cancellation:
                     cancellation.raise_if_cancelled()
                 pieces.append(part)
-                if visible:
+                if visible and output != "buffer":
+                    if output == "detect":
+                        pending = "".join(pieces)
+                        head = pending.lstrip().lower()
+                        if head.startswith(("{", *_JSON_FENCE_STARTS)):
+                            output = "buffer"
+                            continue
+                        if not head or any(start.startswith(head) for start in _JSON_FENCE_STARTS):
+                            continue
+                        output, part = "stream", pending
                     on_event(GenerationEvent(kind="delta", text=part))
         finally:
             close = getattr(stream, "close", None)
@@ -196,6 +244,10 @@ class RagPipeline:
         text = "".join(pieces)
         if not text.strip():
             raise AppError("empty_response", "模型未返回有效内容，请重试。")
+        if unwrap and output != "stream":
+            text = _general_prose(text)
+            if visible:
+                on_event(GenerationEvent(kind="delta", text=text))
         return text
 
     def inspect(
@@ -220,10 +272,8 @@ class RagPipeline:
             paper_evidence = getattr(self.knowledge, "paper_evidence", None)
             paper = None
             if paper_evidence and not self.teaching_profile:
-                previous = next(
-                    (m.content for m in reversed(context_history) if m.role == "user"), None,
-                )
-                paper = paper_evidence(question.strip(), previous_question=previous)
+                previous = tuple(m.content for m in context_history if m.role == "user")
+                paper = paper_evidence(question.strip(), previous_questions=previous)
             if paper is not None:
                 inspection.candidates = paper.candidates
                 if paper.answer is not None:
@@ -346,25 +396,7 @@ class RagPipeline:
                     debug=inspection,
                 )
             if inspection.route == "general":
-                self._phase(on_event, "generating_general")
-                prefix = GENERAL_PREFIX
-                if on_event:
-                    on_event(GenerationEvent(kind="delta", text=prefix))
-                response = self._generate(
-                    GENERAL_SYSTEM,
-                    question,
-                    history=history,
-                    on_event=on_event,
-                    cancellation=cancellation,
-                    visible=True,
-                )
-                if not response.strip():
-                    raise AppError("empty_response", "模型未返回有效内容，请重试。")
-                return AnswerResult(
-                    answer=prefix + response,
-                    mode="general",
-                    debug=inspection,
-                )
+                return self._fallback(question, history, inspection, on_event, cancellation)
             assert inspection.evidence is not None
             support = set(inspection.evidence.supporting_chunk_ids)
             sources = [r for r in inspection.candidates if r.chunk.id in support]

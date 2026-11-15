@@ -132,6 +132,23 @@ def test_comparison_requires_origin_and_distinguishes_methods_and_regimes():
     assert "范围" in other.comparison_label
 
 
+def test_comparison_groups_standard_terms_with_explicit_aliases():
+    context = dict(
+        carrier="hole", regime="linear", statistic="max", measurement_method="DC transfer",
+        measurement_environment="nitrogen", measurement_temperature="25 °C",
+        observation_origin="measured",
+    )
+    standard = analyze_record(record(**context), PAPER)
+    equivalent = analyze_record(record(**(context | {
+        "carrier": "holes", "regime": "ohmic regime", "statistic": "highest",
+    })), PAPER)
+    distinct = analyze_record(record(**(context | {"statistic": "up to"})), PAPER)
+
+    assert standard.comparison_key == equivalent.comparison_key
+    assert standard.comparison_key != distinct.comparison_key
+    assert equivalent.record.statistic == "highest"
+
+
 def test_explicit_context_units_and_temperature_offset():
     row = analyze_record(record(
         anneal_temperature="400 ± 2 K", anneal_duration="1 h", film_thickness="0.1 μm",

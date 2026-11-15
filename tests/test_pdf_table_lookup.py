@@ -11,9 +11,11 @@ from rag_workbench.application.pdf_table_lookup import (
     _page_tables,
     _Table,
     lookup_pdf_table,
+    table_electrode_conditions,
     table_lookup_requested,
     table_sample,
     table_samples,
+    without_table_temperatures,
 )
 
 
@@ -29,11 +31,12 @@ pdfium = pytest.importorskip("pypdfium2")
 
 def ruled_table(
     *, temperature="Substrate temperature (°C)", duplicate=False, numeric_footnote=False,
+    table_number=1,
 ):
     stream = BytesIO()
     pdf = canvas.Canvas(stream, pagesize=(600, 800))
     pdf.setFont("Helvetica", 10)
-    pdf.drawString(50, 747, "Table 1. Device performance.")
+    pdf.drawString(50, 747, f"Table {table_number}. Device performance.")
     for y in (732, 704, 590):
         pdf.line(50, y, 520, y)
     for x, label in zip(
@@ -117,6 +120,31 @@ def test_distinguishes_table_lookup_from_explanatory_question():
     assert table_sample("D42‑OTS 在60℃下的迁移率是多少") == "D42-OTS"
 
 
+@pytest.mark.parametrize(("question", "value"), [
+    ("D42-OTS 的迁移率", "3.5 × 10⁻³"),
+    ("D42-OTS threshold voltage", "−90"),
+    ("D42-OTS 在 60 度下的迁移率", "60 °C | 3.5 × 10⁻³"),
+])
+def test_short_sample_metric_queries(question, value):
+    result = lookup_pdf_table(ruled_table(), question, max_pages=1)
+    assert result is not None and value in result.answer
+
+
+def test_chinese_degree_list_selects_only_exact_conditions():
+    result = lookup_pdf_table(
+        ruled_table(), "D42-OTS 在 25、60 度下的迁移率分别是多少", max_pages=1,
+    )
+    assert result is not None
+    assert "25 °C | 2.8 × 10⁻⁷" in result.answer
+    assert "60 °C | 3.5 × 10⁻³" in result.answer
+    assert "100 °C" not in result.answer
+
+
+def test_mask_only_literal_temperature_spans_for_followup():
+    result = without_table_temperatures("P2 退火 25、60 度 1 小时，以及 Au/150 °C 的迁移率")
+    assert result.split() == ["P2", "退火", "1", "小时,以及", "Au/150", "°C", "的迁移率"]
+
+
 def test_supplementary_table_number_is_not_a_sample_name():
     assert table_samples("Table S1 里 P2 的迁移率是多少？") == ("P2",)
 
@@ -158,6 +186,13 @@ def test_english_temperature_list_with_serial_comma():
     "D42-OTS 在60℃的迁移率和开启电压分别是多少？",
     "Table 1 中除了 D42-OTS 的其他样品迁移率是多少？",
     "D42-OTS 的 60℃ 和 100℃ 迁移率相差多少？",
+    "D42-OTS 在 25 到 100 度的迁移率",
+    "D42-OTS 在 60 度以上的迁移率",
+    "D42-OTS 在华氏 60 度的迁移率",
+    "D42-OTS 在夹角 60 度的迁移率",
+    "without D42-OTS mobility",
+    "D42-Bare 而不是 D42-OTS 的迁移率",
+    "How does D42-OTS mobility depend on film processing?",
 ])
 def test_declines_questions_with_unresolved_conditions_or_metrics(question):
     assert lookup_pdf_table(ruled_table(), question, max_pages=1) is None
@@ -302,9 +337,28 @@ def test_explicit_composite_electrode_labels(label, expected):
     assert "退火温度" not in result.answer
 
 
+def test_composite_electrode_lookup_requires_unique_verified_table():
+    question = "Au/150 °C 的饱和电子平均迁移率"
+    result = lookup_pdf_table(electrode_table(), question, max_pages=1)
+    assert result is not None and "Au/150 °C | 0.64 ± 0.21" in result.answer
+    assert "Ag/150" not in result.answer
+    assert lookup_pdf_table(electrode_table(repeat=True), question, max_pages=1) is None
+
+
+@pytest.mark.parametrize("question", [
+    "Au/150 °C 和 Ag/175 °C 的饱和电子平均迁移率",
+    "without Au/150 °C, saturated electron average mobility",
+    "Au/150 °C 以上的饱和电子平均迁移率",
+    "Au/150 °C 和 Ag/150 °C 的测量饱和电子平均迁移率",
+])
+def test_implicit_table_does_not_relax_composite_conditions(question):
+    assert lookup_pdf_table(electrode_table(), question, max_pages=1) is None
+
+
 def test_sample_hints_keep_compound_and_remove_composite_conditions():
     question = "Table 2 中 TCNBT-Th-IDT 在 Ag/150 °C 和 Au/as-cast 下的迁移率"
     assert table_samples(question) == ("TCNBT-Th-IDT",)
+    assert table_electrode_conditions(question) == ("Ag/150 °C", "Au/as-cast")
     assert table_samples("Table 2 中 Au/150、Ag/150 °C 和 Au/as-cast 的迁移率") == ()
 
 
@@ -399,3 +453,35 @@ def test_explicit_temperatures_follow_their_named_samples():
     assert "D42-Bare | 25 °C | 0.09" in result.answer
     assert "D42-OTS | 100 °C | 0.02" in result.answer
     assert "2.8 × 10⁻⁷" not in result.answer
+
+
+@pytest.mark.parametrize("question", ["Table 2 中 P1 的数据", "P1's data in Table 2"])
+def test_sample_data_returns_supported_columns_and_names_omissions(question):
+    data = condition_table(
+        ("Sample", "Hole mobility (cm2/Vs)", "Contact resistance"),
+        (("P1", "0.086", "150"), ("P2", "0.211", "325")),
+    )
+    result = lookup_pdf_table(data, question, max_pages=1)
+    assert result is not None
+    assert "| P1 | 0.086 |" in result.answer
+    assert "Contact resistance" in result.answer and "未提取" in result.answer
+    assert "150" not in result.answer and "0.211" not in result.answer
+
+
+def test_sample_data_does_not_drop_missing_supported_value():
+    data = condition_table(
+        ("Sample", "Hole mobility (cm2/Vs)", "VT(V)"),
+        (("P1", "0.086", ""), ("P2", "0.211", "-7")),
+    )
+    assert lookup_pdf_table(data, "Table 2 中 P1 的数据", max_pages=1) is None
+
+
+@pytest.mark.parametrize("question", [
+    "D42-OTS 的数据",
+    "Table 1 中 D42-OTS 的晶体厚度数据",
+    "Table 1 中 D42-OTS 的数据来源",
+    "Table 1 中不含 D42-OTS 的数据",
+    "D42-OTS 的数据见 Table 1 还是 Table 2",
+])
+def test_sample_data_requires_explicit_table_and_generic_data_request(question):
+    assert lookup_pdf_table(ruled_table(), question, max_pages=1) is None

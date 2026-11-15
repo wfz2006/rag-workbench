@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from rag_workbench.application.materials import MaterialsService
 from rag_workbench.bootstrap import Services
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.material_terms import MATERIAL_TERMS
 from rag_workbench.domain.materials import STRUCTURED_FIELDS, MaterialRecord
 from rag_workbench.infrastructure.material_draft_store import MaterialDraftStore
 from rag_workbench.ui import material_drafts as drafts
@@ -62,6 +63,14 @@ ORIGIN_LABELS = {
     "calculated": "计算值",
     "digitized": "图中读数",
     "cited": "引用的其他研究结果",
+}
+TERM_HELP = {
+    "carrier": "选 hole（空穴）或 electron（电子），也可照抄其他原文用词。",
+    "regime": "选 saturation（饱和区）或 linear（线性区），也可照抄其他原文用词。",
+    "statistic": (
+        "选 max（最大值，如 highest）、mean（平均值，如 avg）、min（最小值）或 typical（典型值）。"
+        "原文仅说 obtained 或 up to 时，请勿据此选 max。"
+    ),
 }
 IMMUTABLE_FIELDS = {"id", "document_id", "revision", "created_at", "updated_at", "status"}
 
@@ -342,14 +351,18 @@ def _record_form_fields(defaults: dict, prefix: str, blocks: list) -> dict:
                 )
                 or None
             )
-        for field in ("carrier", "regime", "statistic"):
-            values[field] = (
-                st.text_input(
-                    FIELD_LABELS[field], key=f"{prefix}_{field}",
-                    on_change=drafts.remember, args=(prefix, field),
-                )
-                or None
-            )
+        st.caption("选用标准术语或直接输入原文用词，并关联支持此字段的引文。不确定时留空。")
+        for field, terms in MATERIAL_TERMS.items():
+            key = f"{prefix}_{field}"
+            options = ["", *terms]
+            current = st.session_state[key]
+            if current and current not in options:
+                options.append(current)
+            values[field] = st.selectbox(
+                FIELD_LABELS[field], options, key=key, accept_new_options=True,
+                format_func=lambda option: option or "未填写",
+                help=TERM_HELP[field], on_change=drafts.remember, args=(prefix, field),
+            ) or None
     with st.expander("实验字段与观测来源", key=f"{prefix}_experiment", on_change="rerun"):
         values["observation_origin"] = st.selectbox(
             FIELD_LABELS["observation_origin"], list(ORIGIN_LABELS),

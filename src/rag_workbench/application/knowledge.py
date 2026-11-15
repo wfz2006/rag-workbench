@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ import numpy as np
 from filelock import FileLock, Timeout
 from pydantic import ValidationError
 
+from rag_workbench.application.literature_retrieval import ranked_literature_matches
 from rag_workbench.application.paper_queries import paper_question, resolve_documents
 from rag_workbench.application.paper_sources import (
     PAPER_BUDGET,
@@ -18,11 +20,19 @@ from rag_workbench.application.paper_sources import (
     paper_passages,
 )
 from rag_workbench.application.pdf_table_lookup import (
-    lookup_pdf_table,
+    TableLookupAmbiguity,
+    inspect_pdf_table,
+    table_electrode_conditions,
     table_lookup_requested,
     table_samples,
+    without_table_temperatures,
 )
-from rag_workbench.application.query_features import contains_quote, question_type
+from rag_workbench.application.query_features import (
+    MEASUREMENT_PHRASE,
+    contains_quote,
+    material_followup,
+    question_type,
+)
 from rag_workbench.application.retrieval_expansion import (
     coverage_focus,
     coverage_queries,
@@ -45,6 +55,7 @@ from rag_workbench.infrastructure.repository import Repository
 from rag_workbench.infrastructure.vector_store import FaissStore, normalized
 
 QUOTE_CONTEXT_LIMIT = 4
+_TABLE_REFERENCE = re.compile(r"(?:table\s*s?\d|表\s*s?\d|该表|上表)", re.I)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +66,27 @@ def _table_identifier(sample: str) -> re.Pattern[str]:
     separator = r"(?:\s*-\s*|\s+)" if len(parts) >= 3 else r"\s*-\s*"
     form = separator.join(re.escape(part) for part in parts)
     return re.compile(rf"(?<![a-z0-9_-]){form}(?![a-z0-9_(-])")
+
+
+def _rewrite_table_followup(question: str, previous: str) -> str | None:
+    followup = material_followup(question)
+    if not followup or not table_lookup_requested(previous):
+        return None
+    samples = table_samples(previous)
+    if not (samples or table_electrode_conditions(previous) or _TABLE_REFERENCE.search(previous)):
+        return None
+    kind, value = followup
+    if kind == "metric" and MEASUREMENT_PHRASE.search(previous):
+        return f"{MEASUREMENT_PHRASE.sub(' ', previous)} {value}"
+    if kind == "temperature" and not table_electrode_conditions(previous):
+        return f"{without_table_temperatures(previous)} {value}"
+    if kind == "comparison" and len(samples) == 1 and len(table_samples(value)) == 1:
+        # Write both names together so an existing unpaired condition still
+        # applies to both. All other predicates go through the normal guard.
+        source = re.compile(re.escape(samples[0]), re.I)
+        if len(source.findall(previous)) == 1:
+            return source.sub(lambda match: f"{match[0]} 和 {value}", previous, count=1)
+    return None
 
 
 class KnowledgeService:
@@ -563,31 +595,42 @@ class KnowledgeService:
         return data
 
     def paper_evidence(
-        self, question: str, *, previous_question: str | None = None,
+        self, question: str, *, previous_questions: tuple[str, ...] = (),
     ) -> PaperEvidence | None:
         profile = paper_question(question, has_reference=True)
         table = table_lookup_requested(question)
-        if self.settings.spoiler_max_page is not None or not (profile or table):
+        followup = material_followup(question) if previous_questions else None
+        if self.settings.spoiler_max_page is not None or not (profile or table or followup):
             return None
         with self._locked():
             catalog = self.repo.documents()
             named, ambiguous, lookup_question = resolve_documents(question, catalog)
             table = table_lookup_requested(lookup_question)
-            if not (table or paper_question(lookup_question, has_reference=True)):
+            if not (table or followup or paper_question(lookup_question, has_reference=True)):
                 return None
-            samples = table_samples(lookup_question) if table else ()
-            if (
-                table and previous_question
-                and re.search(r"(?:table\s*s?\d|表\s*s?\d|该表|上表)", lookup_question, re.I)
-            ):
-                previous_docs, previous_ambiguous, previous_text = resolve_documents(
-                    previous_question, catalog
+            if not named and followup:
+                previous_text = ""
+                for previous in previous_questions[-6:]:
+                    docs, conflicting, masked = resolve_documents(previous, catalog)
+                    if not docs and material_followup(previous):
+                        previous_text = _rewrite_table_followup(masked, previous_text) or ""
+                    else:
+                        named, ambiguous = docs, conflicting
+                        previous_text = masked
+                if rewritten := _rewrite_table_followup(lookup_question, previous_text):
+                    lookup_question = rewritten
+                    table = table_lookup_requested(lookup_question)
+            elif table and previous_questions and _TABLE_REFERENCE.search(lookup_question):
+                docs, conflicting, masked = resolve_documents(previous_questions[-1], catalog)
+                same_scope = not named or not docs or named == docs
+                has_subject = (
+                    table_samples(lookup_question) or table_electrode_conditions(lookup_question)
                 )
-                same_scope = not named or not previous_docs or named == previous_docs
-                if not named:
-                    named, ambiguous = previous_docs, previous_ambiguous
-                if same_scope and not samples and (samples := table_samples(previous_text)):
-                    lookup_question += "\n样品：" + "、".join(samples)
+                if not has_subject:
+                    if not named:
+                        named, ambiguous = docs, conflicting
+                    if same_scope and (samples := table_samples(masked)):
+                        lookup_question += "\n样品：" + "、".join(samples)
             if ambiguous:
                 message = "同一个名称匹配到多份文档。请写明完整文件名，或重命名同名文档。"
                 return PaperEvidence(answer=message, reason=message)
@@ -598,7 +641,11 @@ class KnowledgeService:
                 message = "所问文档尚未成功导入。请在知识库管理中检查索引状态。"
                 return PaperEvidence(answer=message, reason=message)
             if table and not named:
-                candidates = self._table_candidates(catalog, samples)
+                candidates = self._table_candidates(
+                    catalog,
+                    table_samples(lookup_question),
+                    table_electrode_conditions(lookup_question),
+                )
                 try:
                     originals = [(doc, self._verified_original(doc)) for doc in candidates]
                 except AppError:
@@ -610,7 +657,7 @@ class KnowledgeService:
             hits = [
                 (doc, hit) for doc, data in originals
                 if doc.extension == ".pdf"
-                and (hit := lookup_pdf_table(
+                and (hit := inspect_pdf_table(
                     data, lookup_question, max_pages=self.settings.max_pdf_pages
                 )) is not None
             ]
@@ -619,6 +666,17 @@ class KnowledgeService:
                 return PaperEvidence(answer=message, reason=message)
             if hits:
                 doc, hit = hits[0]
+                if isinstance(hit, TableLookupAmbiguity):
+                    where = "、".join(f"第 {page} 页 {label}" for label, page in hit.locations[:4])
+                    choices = []
+                    if len({label for label, _ in hit.locations}) > 1:
+                        choices.append("表号")
+                    if hit.measurements:
+                        choices.append("指标口径（如" + "或".join(hit.measurements[:3]) + "）")
+                    message = f"{doc.name} 的{where}有多种候选数据。请明确" + (
+                        "和".join(choices) if choices else "所问的样品或实验条件"
+                    ) + "后再查。"
+                    return PaperEvidence(answer=message, reason=message)
                 source = page_source(doc, hit.page, hit.text, method="pdf_table")
                 reason = f"已在 {doc.name} 第 {hit.page} 页的 {hit.table_label} 定位所问表格行。"
                 return PaperEvidence([source], answer=hit.answer, reason=reason)
@@ -636,16 +694,26 @@ class KnowledgeService:
         return PaperEvidence(passages)
 
     def _table_candidates(
-        self, catalog: list[Document], samples: tuple[str, ...]
+        self, catalog: list[Document], samples: tuple[str, ...], electrodes: tuple[str, ...],
     ) -> list[Document]:
         ready = [doc for doc in catalog if doc.status == "ready" and doc.extension == ".pdf"]
         if len(ready) < 2:
             return ready
-        if not samples:
+        if not (samples or electrodes):
             return []
         chunks, _ = self._snapshot()
         ready_ids = {doc.id for doc in ready}
         patterns = [_table_identifier(sample) for sample in samples]
+        for label in electrodes:
+            metal, _, condition = identifier_text(label).partition("/")
+            metal, condition = metal.strip(), condition.strip().removesuffix("°c").strip()
+            if condition == "as-cast":
+                condition_pattern = r"as[\s-]+cast\b"
+            else:
+                condition_pattern = re.escape(condition) + r"(?!\d|\.\d)"
+            patterns.append(re.compile(
+                rf"(?<![a-z0-9]){re.escape(metal)}\s*/\s*{condition_pattern}",
+            ))
         matches: dict[str, set[int]] = {}
         for chunk in chunks:
             if chunk.document_id in ready_ids:
@@ -668,6 +736,18 @@ class KnowledgeService:
             if not active:
                 raise AppError("index_corrupt", "文本块存在但活动索引缺失，请重新索引。")
             index = self.store.load(active, chunks, self.signature)
+            original_question = coverage_question or question
+            scoped: set[str] = set()
+            if self.settings.spoiler_max_page is None and (
+                paper_question(original_question, has_reference=True)
+                or table_lookup_requested(original_question)
+            ):
+                named, ambiguous, _ = resolve_documents(
+                    original_question, list(self._source_catalog.values()),
+                )
+                if ambiguous or len(named) > 2 or any(doc.status != "ready" for doc in named):
+                    return []
+                scoped = {doc.id for doc in named}
             expanded = expand_query(question, self.expansions)
             query = normalized(self.embedder.encode_query(expanded.text), 1)
             window = self.settings.retrieval_context_window
@@ -681,7 +761,7 @@ class KnowledgeService:
                 self._lexical_cache = (chunks, BM25Index([chunk.text for chunk in chunks]))
             lexical = self._lexical_cache[1]
             lexical_scores = lexical.scores(expanded.text)
-            focus = coverage_focus(coverage_question or question, question)
+            focus = coverage_focus(original_question, question)
             coverage = lexical.coverage_any(coverage_queries(focus, self.expansions))
             mixed_matches = lexical.mixed_identifier_matches(focus)
             lexical_ranking = sorted(
@@ -694,6 +774,7 @@ class KnowledgeService:
                 index
                 for index in reciprocal_rank_fusion(rankings)
                 if self._spoiler_allowed(chunks[index])
+                and (not scoped or chunks[index].document_id in scoped)
             ]
             # Retain a matching original when Chinese notes fill the initial top-k.
             # This path still requires the explicit compound/DOI and numeric constraints.
@@ -701,6 +782,7 @@ class KnowledgeService:
                 i for i, matched in enumerate(mixed_matches)
                 if matched and self._source_catalog[chunks[i].document_id].extension == ".pdf"
                 and self._spoiler_allowed(chunks[i])
+                and (not scoped or chunks[i].document_id in scoped)
             }
             limit = self.settings.top_k
             if anchored_pdfs and not anchored_pdfs.intersection(fused[:limit]):
@@ -708,12 +790,39 @@ class KnowledgeService:
                 if best is None:
                     best = max(anchored_pdfs, key=lambda i: (lexical_scores[i], -i))
                 fused = [*fused[:limit - 1], best, *(i for i in fused[limit - 1:] if i != best)]
+            literature = (
+                [i for i in ranked_literature_matches(focus, chunks, self._source_catalog)
+                 if self._spoiler_allowed(chunks[i])]
+                if not scoped and self.settings.spoiler_max_page is None else []
+            )
+            if literature:
+                # A verified material/metric match gets a place ahead of generic
+                # semantic hits. Keep other sources visible when the pool allows.
+                rank_order = dict.fromkeys([*literature[:2], *fused, *literature[2:]])
+                counts: Counter[str] = Counter()
+                first, deferred = [], []
+                for i in rank_order:
+                    source_id = chunks[i].document_id
+                    (first if counts[source_id] < 2 else deferred).append(i)
+                    counts[source_id] += 1
+                fused = first + deferred
+            literature_matches = set(literature)
+            if scoped and len(fused) < limit:
+                # A named note can rank outside both global candidate pools.
+                # Prefer its locally matching passages and keep their real dense scores.
+                seen = set(fused)
+                remaining = sorted(
+                    (i for i, chunk in enumerate(chunks)
+                     if chunk.document_id in scoped and i not in seen),
+                    key=lambda i: (-lexical_scores[i], i),
+                )
+                fused.extend(remaining[:limit - len(fused)])
 
             def lexical_passed(index: int) -> bool:
-                return lexical_scores[index] > 0 and (
+                return index in literature_matches or (lexical_scores[index] > 0 and (
                     coverage[index] >= self.settings.lexical_min_coverage
                     or index in anchored_pdfs
-                )
+                ))
             # Lexical-only candidates may fall outside the dense candidate pool.
             chunks_by_document: dict[str, list[Chunk]] = {}
             chunks_by_ordinal: dict[tuple[str, int], Chunk] = {}
@@ -739,6 +848,7 @@ class KnowledgeService:
                     lexical_score=lexical_scores[index],
                     original_page=self._source_catalog[chunks[index].document_id].source_page,
                     lexical_passed=lexical_passed(index),
+                    retrieval_method="paper" if scoped else None,
                 )
                 for index in fused[: self.settings.top_k]
             ]
@@ -793,6 +903,7 @@ class KnowledgeService:
                             d
                             for d in self._source_catalog.values()
                             if d.source_group == source.source_group
+                            and (not scoped or d.id in scoped)
                             and d.source_page is not None
                             and 0 < abs(d.source_page - source.source_page) <= window
                         ),

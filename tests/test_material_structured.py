@@ -78,6 +78,73 @@ def test_structured_values_keep_supplement_evidence_and_reject_partial_quantity(
         MaterialRecord.model_validate({**approved.model_dump(), "film_thickness": "20 nm"})
 
 
+@pytest.mark.parametrize(("field", "value", "source", "quote"), [
+    ("statistic", "max", "Alpha demonstrated the HIGHEST mobilities up to 0.25, "
+     "there was no OFET performance for Beta.", "the HIGHEST mobilities up to 0."),
+    ("statistic", "AVG", "The Average mobility was 0.25.", "Average mobility"),
+    ("statistic", "min", "最低迁移率为 0.25。", "最低迁移率"),
+    ("carrier", "hole", "The carriers were holes.", "holes"),
+    ("regime", "linear", "Mobility was measured in the ohmic regime.", "ohmic regime"),
+    ("statistic", "median of six", "The median of six devices was 0.25.", "median of six"),
+])
+def test_classification_evidence_preserves_the_entered_value(settings, field, value, source, quote):
+    service, document, _ = _paper(settings)
+    supplement = service.ingest(
+        "results.txt", source.encode(), role="supplement", parent_id=document.id,
+    )
+    block = service.repo.blocks(supplement.id)[0]
+    base = _record(service, document)
+    candidate = base.model_copy(update={
+        field: value, "evidence": [*base.evidence, EvidenceReference(
+            field=field, block_id=block.id, quote=quote,
+        )],
+    })
+
+    approved = service.review(base.id, service.add_record(candidate), status="approved")
+
+    assert getattr(approved, field) == value
+    assert approved.evidence[-1].quote == quote
+
+
+@pytest.mark.parametrize(("field", "value", "source", "quote"), [
+    ("statistic", "max", "Mobility of 0.25 was obtained.", "was obtained"),
+    ("statistic", "max", "Mobility was up to 0.25.", "up to 0.25"),
+    ("statistic", "max", "Mobility was not the highest.", "highest"),
+    ("statistic", "max", "Maximum mobility was not reported.", "Maximum mobility"),
+    ("statistic", "Max.", "Max. mobility cannot be determined.", "Max. mobility"),
+    ("statistic", "max", "Maximum and average mobility were reported.", "Maximum"),
+    ("statistic", "max", "Max. and avg. mobilities were reported.", "Max."),
+    ("statistic", "max", "The highest mobility was 0.25. Average mobility was 0.20.",
+     "The highest mobility was 0.25. Average mobility was 0.20."),
+    ("statistic", "max", "This was the second-highest mobility.", "highest mobility"),
+    ("statistic", "mean", "The geometric mean was 0.25.", "mean"),
+    ("statistic", "max", "There was no maximum mobility reported.", "maximum"),
+    ("statistic", "max", "最高迁移率未报告。", "最高迁移率"),
+    ("statistic", "max", "The maximum mobility was 0.25.", "max"),
+    ("carrier", "electron", "Electron and hole mobilities were reported.", "Electron"),
+    ("carrier", "electron", "The carrier is not an electron.", "electron"),
+    ("regime", "linear", "The linear fit used data from the saturation regime.", "linear"),
+])
+def test_classification_evidence_rejects_unstated_or_conflicting_claims(
+    settings, field, value, source, quote,
+):
+    service, document, _ = _paper(settings)
+    supplement = service.ingest(
+        "results.txt", source.encode(), role="supplement", parent_id=document.id,
+    )
+    block = service.repo.blocks(supplement.id)[0]
+    base = service.add_record(_record(service, document))
+    update = base.model_copy(update={
+        field: value, "evidence": [*base.evidence, EvidenceReference(
+            field=field, block_id=block.id, quote=quote,
+        )],
+    })
+    with pytest.raises(AppError, match=field) as error:
+        service.review(base.id, update, status="approved")
+    assert error.value.code == "invalid_material_evidence"
+    assert service.repo.record(base.id).status == "candidate"
+
+
 def test_legacy_ids_and_old_drafts_remain_usable(settings):
     service, document, _ = _paper(settings)
     row = _record(service, document)
@@ -116,6 +183,27 @@ def test_legacy_ids_and_old_drafts_remain_usable(settings):
     )
     assert _recovery_issue(service, structured_draft) is None
     assert _editor_defaults(row.model_dump())["anneal_temperature"] == ""
+
+
+def test_classification_editor_keeps_legacy_custom_values_and_restores_a_standard_draft(
+    settings, monkeypatch,
+):
+    service, document, _ = _paper(settings)
+    row = service.add_record(_record(service, document).model_copy(update={
+        "statistic": "median of six",
+    }))
+    key = f"materials_edit_{row.id}_1_statistic"
+    app = _app(service, settings, monkeypatch)
+    app.selectbox(key="materials_selected_doc").set_value(document.id).run()
+    assert app.selectbox(key=key).value == "median of six"
+    app.selectbox(key=key).set_value("max").run()
+    assert app.selectbox(key=key).value == "max"
+
+    reopened = _app(service, settings, monkeypatch)
+    reopened.button(key="materials_restore_draft").click().run()
+    assert not reopened.exception
+    assert reopened.selectbox(key=key).value == "max"
+    assert service.repo.record(row.id).statistic == "median of six"
 
 
 def test_structured_editor_restores_draft_and_saves_evidence(settings, monkeypatch):

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.material_terms import standard_material_term
 from rag_workbench.domain.materials import LiteratureDocument, MaterialRecord
 from rag_workbench.infrastructure.material_repository import MaterialsRepository
 
@@ -301,7 +302,11 @@ def _comparison(
     ):
         return None, "比较口径待确认"
     extra = tuple(_clean_text(getattr(record, field, None)) for field in _ADDITIONAL_CONDITIONS)
-    key = (metric.key, origin, value.kind, value.bound or "", *terms, *extra)
+    group = tuple(
+        standard_material_term(field, term) or term
+        for field, term in zip(_COMPARISON_FIELDS, terms, strict=True)
+    )
+    key = (metric.key, origin, value.kind, value.bound or "", *group, *extra)
     titles = (*_COMPARISON_FIELDS.values(), *_ADDITIONAL_CONDITIONS.values())
     conditions = (f"{title} {term}" for title, term in zip(titles, (*terms, *extra), strict=True)
                   if term)

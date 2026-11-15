@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from rag_workbench.application.material_analysis import normalized_scalar
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.material_terms import MATERIAL_TERMS, standard_material_term
 from rag_workbench.domain.materials import (
     STRUCTURED_FIELDS,
     EvidenceReference,
@@ -290,6 +291,42 @@ _NUMERIC_END = (
     r"|\s*[×xX*]\s*10|[+\-–—]\s*\d)"
 )
 _EXPONENT_LEFT = re.compile(r"\d\s*[×xX*]\s*$")
+_TERM_CLAUSE_END = re.compile(
+    r"[!?;。！？；]|(?<!\bmax)(?<!\bmin)(?<!\bavg)\.(?!\d)|"
+    r"[,，]\s*(?=there (?:was|were|is|are)\b|whereas\b|while\b|but\b)",
+    re.I,
+)
+_TERM_NEGATION = re.compile(
+    r"\b(?:no|not|never|neither|nor|without|cannot|unreported)\b|\bnon(?=[ -])|n['’]t\b|"
+    r"没有|并非|而非|不是|不在|未在|未[能曾]?报告|未[能曾]?测得|未[能曾]?达到|"
+    r"未[能曾]?(?:得到|发现|观测|观察|给出)|非(?=饱和|线性|空穴|电子|最高|最大|最低|最小|平均)",
+    re.I,
+)
+_OTHER_STATISTICS = re.compile(
+    r"\b(?:(?:weighted|geometric|harmonic|trimmed|moving) (?:mean|average)|median)\b"
+    r"|中位数|(?:加权|几何|调和|移动)平均",
+    re.I,
+)
+_QUALIFIED_EXTREME = re.compile(
+    r"\b(?:second|third|\d+(?:st|nd|rd|th))[- ](?:highest|lowest)\b"
+    r"|\b(?:one of|among) the (?:highest|lowest)\b|次[高低]",
+    re.I,
+)
+_REGIME_CONTEXT = re.compile(r"^\s*(?:(?:regime|region|mobility|operation)\b|\W*$)", re.I)
+
+
+def _term_pattern(term: str) -> str:
+    literal = re.escape(term)
+    return rf"(?<![a-z0-9_]){literal}(?![a-z0-9_])" if term.isascii() else literal
+
+
+_TERM_PATTERNS = {
+    field: re.compile("|".join(
+        f"(?P<{name}>" + "|".join(map(_term_pattern, aliases)) + ")"
+        for name, aliases in choices.items()
+    ), re.I)
+    for field, choices in MATERIAL_TERMS.items()
+}
 
 
 def _reuse_extraction_quotes(
@@ -365,9 +402,12 @@ def _evidence_error(record, evidence, source: str | None) -> AppError | None:
         return AppError("invalid_material_evidence", "证据不在本篇文献及其补充材料原文中。")
     raw = getattr(record, evidence.field)
     if raw and not _field_in_source(evidence.field, raw, evidence.quote, source):
+        advice = (
+            "请选用引文明确支持的选项，或照抄原文用词；原文未说明时请留空。"
+            if evidence.field in MATERIAL_TERMS else "请按原文摘录并核对完整数值。"
+        )
         return AppError(
-            "invalid_material_evidence",
-            f"字段 {evidence.field} 与证据不一致，请按原文摘录并核对完整数值。",
+            "invalid_material_evidence", f"字段 {evidence.field} 与证据不一致，{advice}",
         )
     return None
 
@@ -375,11 +415,53 @@ def _evidence_error(record, evidence, source: str | None) -> AppError | None:
 def _field_in_source(field: str, value: str, quote: str, source: str) -> bool:
     if field == "observation_origin":
         return True
+    if term := standard_material_term(field, value):
+        return _term_in_source(field, term, quote, source)
     if field == "unit_raw":
         return _excerpt_contains(value, quote, source, unit=True)
     if field in (*STRUCTURED_FIELDS, "value_raw"):
         return _excerpt_contains(value, quote, source)
     return quote_in_source(value, quote)
+
+
+def _term_in_source(field: str, term: str, quote: str, source: str) -> bool:
+    source = comparable_pdf_text(source)
+    clauses = []
+    start = 0
+    for boundary in _TERM_CLAUSE_END.finditer(source):
+        clauses.append((start, source[start:boundary.start()]))
+        start = boundary.end()
+    clauses.append((start, source[start:]))
+
+    # Inspect the source clause so clipping a quote cannot omit a negation or competing label.
+    supported = []
+    for start, clause in clauses:
+        matches = list(_TERM_PATTERNS[field].finditer(clause))
+        if not matches:
+            continue
+        unanimous = len({match.lastgroup for match in matches}) == 1
+        clear = unanimous and not _TERM_NEGATION.search(clause)
+        if field == "statistic" and (
+            _OTHER_STATISTICS.search(clause) or _QUALIFIED_EXTREME.search(clause)
+        ):
+            clear = False
+        for match in matches:
+            # "Linear fitting" or "saturation current" alone does not say which regime was used.
+            explicit = field != "regime" or match[0].lower() not in {"linear", "saturation"} or (
+                _REGIME_CONTEXT.match(clause[match.end():])
+                or re.search(r"\b(?:regime|region)\s*[:=]\s*$", clause[:match.start()], re.I)
+            )
+            supported.append((start + match.start(), start + match.end(), match.lastgroup,
+                              clear and bool(explicit)))
+
+    located = False
+    for excerpt in re.finditer(re.escape(comparable_pdf_text(quote)), source):
+        claims = {(name, support) for start, end, name, support in supported
+                  if excerpt.start() <= start and end <= excerpt.end()}
+        if claims != {(term, True)}:
+            return False
+        located = True
+    return located
 
 
 def _excerpt_contains(value: str, quote: str, block_text: str, *, unit: bool = False) -> bool:

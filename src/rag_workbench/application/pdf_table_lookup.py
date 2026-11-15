@@ -15,7 +15,7 @@ import numpy as np
 from rag_workbench.infrastructure.material_preview import _PDFIUM_LOCK
 
 _NUMBER = r"[+-]?(?:\d+(?:\.\d+)?|\.\d+)"
-_CELSIUS = r"(?:°\s*C|degrees?\s+C(?:elsius)?|C(?:elsius)?)(?![A-Za-z])"
+_CELSIUS = r"(?:°\s*C|degrees?\s+C(?:elsius)?|C(?:elsius)?|(?:摄氏)?度)(?![A-Za-z])"
 _TEMP_LIST = re.compile(
     rf"(?<![A-Za-z\d.])({_NUMBER}(?:\s*(?:,\s+and\b|[、,，/和及与&]|\band\b)\s*{_NUMBER})*)"
     rf"\s*{_CELSIUS}", re.I,
@@ -25,6 +25,14 @@ _DURATION = re.compile(
 )
 _TABLE = re.compile(r"(?<![A-Za-z])table\s*(s?\d+)(?![A-Za-z0-9])|表\s*(s?\d+)", re.I)
 _FILE_OR_DOI = re.compile(r"[^\s/\\]+\.(?:pdf|txt)\b|10\.\d{4,9}/[\w./-]+", re.I)
+_DATA_WORD = re.compile(r"数据|数值|\b(?:data|values)\b", re.I)
+_DATA_SYNTAX = re.compile(
+    r"请问?|帮我|给我|列出|看看?|读取|提取|给出|显示|查看|数据|数值|配比|样品|表中|里|中|的|在|下"
+    r"|所有|全部"
+    r"|\b(?:please|what|are|is|give|show|me|list|read|report|all|the|data|values|"
+    r"for|from|of|in|at|on|sample)\b|['’]s\b|[\s,、，:：。.!?？！()]",
+    re.I,
+)
 _IDENTIFIER = re.compile(
     r"(?<![A-Za-z0-9_.-])(?:[A-Za-z][A-Za-z0-9()\[\]/_-]*|\d{1,3}%)(?![A-Za-z0-9_.-])",
 )
@@ -62,7 +70,8 @@ _AS_CAST = re.compile(r"未退火|无退火|未经退火|as[- ]cast|unannealed|w
 _ELECTRODE = re.compile(r"(?<![A-Za-z])(?:Au|Ag)(?![A-Za-z])|金电极|银电极")
 _ELECTRODE_LABEL = re.compile(
     rf"(?<![A-Za-z\d/])(?P<metal>Au|Ag)\s*/\s*"
-    rf"(?:(?P<temp>{_NUMBER})(?:\s*{_CELSIUS})?|(?P<cast>as[- ]cast))(?![A-Za-z\d./])",
+    rf"(?:(?P<temp>{_NUMBER})(?:\s*{_CELSIUS})?|(?P<cast>as[- ]cast))"
+    r"(?![A-Za-z\d/]|\.\d|\s*[°度])",
     re.I,
 )
 _ELECTRODE_ROW = re.compile(
@@ -76,21 +85,22 @@ _FOOTNOTE = re.compile(
 )
 _RELATIVE = re.compile(
     r"[<>≤≥≈~]|不[高低少多小大]于|[高低少多小大]于|超过|至少|至多|以下|以上|左右|约[为等于]?"
-    r"|(?:范围|区间|介于)|除了?|除外|排除|不含|不包括|其他(?:样品|材料|聚合物|器件)"
+    r"|(?:范围|区间|介于)|除了?|除外|排除|不含|不包括|而非|而不是|其他(?:样品|材料|聚合物|器件)"
     r"|相差|差值|差异|比值|几倍|多少倍|增(?:长|加|幅)|降低|提升|提高|下降"
     r"|\b(?:above|below|around|approximately|between|excluding|exclude|except"
     r"|at least|at most|less than|more than|greater than|no lower than|no higher than"
-    r"|or higher|or lower|or above|or below|difference|increase|decrease|fold|times higher)\b",
+    r"|or higher|or lower|or above|or below|rather than|difference"
+    r"|increase|decrease|fold|times higher)\b",
     re.I,
 )
-_NEGATED_ELECTRODE = re.compile(
+_EXCLUDED = (
     r"(?:\b(?:without|no|not(?:\s+using)?)\s+|没有\s*|未使用\s*|不使用\s*|不含\s*|无\s*)"
-    rf"(?:(?:an?|the)\s+)?(?:{_ELECTRODE.pattern})",
-    re.I,
+    r"(?:(?:an?|the)\s+)?"
 )
+_NEGATED_ELECTRODE = re.compile(rf"{_EXCLUDED}(?:{_ELECTRODE.pattern})", re.I)
 _UNSUPPORTED_REQUEST = re.compile(
     r"开启电压|开启电流|亚阈值(?:摆幅|斜率)|接触电阻|漏极(?:电压|电流)|栅极(?:电压|电流)"
-    r"|偏置|室温|常温|沟道(?:长度|宽度)|可靠性因子|功率转换效率|填充因子"
+    r"|偏置|室温|常温|沟道(?:长度|宽度)|可靠性因子|功率转换效率|填充因子|华氏|开尔文|角度|夹角|度角"
     r"|\b(?:subthreshold (?:swing|slope)|contact resistance|turn[- ]on (?:voltage|current)"
     r"|(?:drain|gate|source)[- ](?:bias|voltage|current)|bias(?:ed)?|room temperature"
     r"|ambient temperature|channel (?:length|width)|reliability factor|power conversion efficiency"
@@ -104,6 +114,12 @@ class TableLookup:
     text: str
     answer: str
     table_label: str
+
+
+@dataclass(frozen=True)
+class TableLookupAmbiguity:
+    locations: tuple[tuple[str, int], ...]
+    measurements: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -190,6 +206,16 @@ def _requested_metrics(question):
     return [key for key, pattern in _METRICS.items() if pattern.search(question)]
 
 
+def _sample_data_requested(question, samples):
+    if not samples or not _TABLE.search(question):
+        return False
+    text = _TABLE.sub(" ", _FILE_OR_DOI.sub(" ", question))
+    text = _TEMP_LIST.sub(" ", _ELECTRODE_LABEL.sub(" ", text))
+    for sample in sorted(samples, key=len, reverse=True):
+        text = re.sub(_sample_pattern(sample), " ", text, flags=re.I)
+    return _DATA_WORD.search(text) is not None and not _DATA_SYNTAX.sub("", text)
+
+
 def _unsupported_request(question):
     text = _TABLE.sub(" ", _FILE_OR_DOI.sub(" ", question))
     if _RELATIVE.search(text) or _NEGATED_ELECTRODE.search(text) or _UNSUPPORTED_REQUEST.search(
@@ -200,7 +226,9 @@ def _unsupported_request(question):
         text, re.I,
     ):
         return True
-    if re.search(rf"{_NUMBER}\s*(?:°\s*[FK]|kelvins?|fahrenheit|[FK])(?![A-Za-z])", text, re.I):
+    if re.search(
+        rf"{_NUMBER}\s*(?:度\s*)?(?:°\s*[FK]|kelvins?|fahrenheit|[FK])(?![A-Za-z])", text, re.I,
+    ):
         return True
     text = _ELECTRODE_LABEL.sub(" ", text)
     text = _DURATION.sub(" ", _TEMP_LIST.sub(" ", text))
@@ -211,22 +239,54 @@ def _unsupported_request(question):
 
 def table_lookup_requested(question: str) -> bool:
     normalized = _normalize(question)
-    if not _requested_metrics(normalized):
-        return False
     if re.search(
-        r"最低|最小|为什么|为何|原因|解释|机理|机制|预测|趋势|"
-        r"\b(?:minimum|lowest|why|explain|mechanism|predict|trend)\b",
+        r"最低|最小|为什么|为何|原因|解释|机理|机制|预测|趋势|如何(?:变化|改变|影响)|"
+        r"\b(?:minimum|lowest|why|explain|mechanism|predict|trend"
+        r"|how (?:do|does|did|can|is|are))\b",
         normalized, re.I,
     ) or _unsupported_request(normalized):
         return False
+    samples = table_samples(normalized)
+    if any(re.search(rf"{_EXCLUDED}{_sample_pattern(sample)}", normalized, re.I)
+           for sample in samples):
+        return False
+    if not _requested_metrics(normalized):
+        return _sample_data_requested(normalized, samples)
     numeric_intent = re.search(
         r"多少|分别|数值|列出|提取|读取|给出|汇总|数据|对比|比较|"
         r"\b(?:what|list|extract|give|report|values|how much|compare)\b", normalized, re.I,
     )
     return bool(
-        numeric_intent or _TEMP_LIST.search(normalized) or _TABLE.search(normalized)
+        samples or numeric_intent or _TEMP_LIST.search(normalized) or _TABLE.search(normalized)
         or _ELECTRODE_LABEL.search(normalized),
     )
+
+
+def _literal_temperature_spans(normalized):
+    def mask(match):
+        return "\0" * len(match[0])
+
+    # Keep offsets, and prevent numbers on either side from merging into a list.
+    return _TEMP_LIST.finditer(_ELECTRODE_LABEL.sub(mask, _FILE_OR_DOI.sub(mask, normalized)))
+
+
+def table_temperatures(question: str) -> tuple[Decimal, ...]:
+    """Extract literal Celsius temperatures outside composite electrode labels."""
+    return tuple(dict.fromkeys(
+        Decimal(value) for match in _literal_temperature_spans(_normalize(question))
+        for value in re.findall(_NUMBER, match[1])
+    ))
+
+
+def without_table_temperatures(question: str) -> str:
+    """Mask literal Celsius expressions while preserving other conditions."""
+    normalized = _normalize(question)
+    parts = []
+    end = 0
+    for match in _literal_temperature_spans(normalized):
+        parts.extend((normalized[end:match.start()], " "))
+        end = match.end()
+    return "".join((*parts, normalized[end:]))
 
 
 def _symbols_from_shape(page, glyph):
@@ -854,9 +914,10 @@ def _row_name(row, header, electrode_label):
 
 def _condition_label(text):
     label = _electrode_row(text)
-    if label is None:
-        return text
-    metal, temp = label
+    return text if label is None else _format_electrode(*label)
+
+
+def _format_electrode(metal, temp):
     return f"{metal}/as-cast" if temp is None else f"{metal}/{temp} °C"
 
 
@@ -890,7 +951,7 @@ def _minutes(text):
 def _explicit_temperature_kind(question, has_temperatures):
     kinds = _choices(_TEMP_KINDS, question)
     if has_temperatures and re.search(
-        r"(?:测得|测试|测量)\s*(?:温度|为|在)|(?:°\s*C)\s*(?:的\s*)?(?:测量|测试|测得)",
+        rf"(?:测得|测试|测量)\s*(?:温度|为|在)|{_CELSIUS}\s*(?:的\s*)?(?:测量|测试|测得)",
         question, re.I,
     ):
         kinds.add("measurement")
@@ -946,10 +1007,15 @@ def _temperature_pairs(question, named, temps):
 
 
 def _electrode_pairs(question):
-    return {
+    return tuple(dict.fromkeys(
         (match["metal"].title(), Decimal(match["temp"]) if match["temp"] is not None else None)
         for match in _ELECTRODE_LABEL.finditer(question)
-    }
+    ))
+
+
+def table_electrode_conditions(question: str) -> tuple[str, ...]:
+    """Return composite electrode labels as discovery hints, separate from sample names."""
+    return tuple(_format_electrode(*pair) for pair in _electrode_pairs(_normalize(question)))
 
 
 def _select_rows(table, question, temps):
@@ -961,7 +1027,7 @@ def _select_rows(table, question, temps):
     labels = labels if electrode_labels else [None] * len(labels)
     names = [_row_name(row[sample.index], header, label)
              for row, label in zip(table.rows, labels, strict=True)]
-    electrode_pairs = _electrode_pairs(question)
+    electrode_pairs = set(_electrode_pairs(question))
     qualifier = _ELECTRODE_LABEL.sub(" ", question)
     explicitly_all = bool(re.search(
         r"各(?:聚合物|样品|材料|化合物|器件)|所有|\ball\b", question, re.I,
@@ -975,7 +1041,7 @@ def _select_rows(table, question, temps):
     if requested and not requested.issubset({_name_key(name) for name in named}):
         return None
     if not named:
-        if electrode_pairs and electrode_labels and _TABLE.search(question):
+        if electrode_pairs and electrode_labels:
             named = {header}
         elif explicitly_all and _TABLE.search(question) and table.complete:
             named = {name for name in names if name}
@@ -1111,7 +1177,7 @@ def _statistics_by_metric(question, requested):
     return per_metric
 
 
-def _select_metrics(fields, question):
+def _select_metrics(fields, question, *, alternatives=None):
     requested = _requested_metrics(question)
     statistics = _statistics_by_metric(question, requested)
     regimes = _choices(_REGIMES, question)
@@ -1142,6 +1208,8 @@ def _select_metrics(fields, question):
                         )
                     ]
                     if len(matching) != 1:
+                        if len(matching) > 1 and alternatives is not None:
+                            alternatives.extend(matching)
                         return None
                     selected.append(matching[0])
     return selected
@@ -1169,8 +1237,30 @@ def _safe_cell(text):
     return text.replace("|", r"\|")
 
 
-def _candidate_table(table, question, temps, page):
-    metrics = _select_metrics(table.fields, question)
+def _candidate_table(table, question, temps, page, *, conflicts=None):
+    sample_data = not _requested_metrics(question)
+    if sample_data:
+        if not table.complete or not _sample_data_requested(question, table_samples(question)):
+            return None
+        metrics = [
+            (field, maximum) for field in table.fields if field.kind in _METRICS
+            for maximum in ((False, True) if field.inline_maximum else (False,))
+        ]
+    else:
+        alternatives = [] if conflicts is not None else None
+        metrics = _select_metrics(table.fields, question, alternatives=alternatives)
+        if alternatives:
+            selection = _select_rows(table, question, temps)
+            if selection and all(
+                _MEASUREMENT.fullmatch(row[field.index])
+                and _measurement_value(row[field.index], field, maximum)
+                for row, _, _ in selection[2] for field, maximum in alternatives
+            ):
+                conflicts.append(TableLookupAmbiguity(
+                    ((table.label, page),),
+                    tuple(dict.fromkeys(_metric_label(field, maximum)
+                                        for field, maximum in alternatives)),
+                ))
     selection = _select_rows(table, question, temps) if metrics else None
     if selection is None:
         return None
@@ -1184,6 +1274,8 @@ def _candidate_table(table, question, temps, page):
         temperature = _TEMP_KINDS[temp_field.kind][1]
         labels.append(temperature + ("（°C） / 时间（h）" if temp_field.unit == "°C/h" else ""))
     labels.extend(_metric_label(field, maximum) for field, maximum in metrics)
+    if sample_data and len(labels) != len(set(labels)):
+        return None
     sample_label = f"中 **{_safe_cell(next(iter(names)))}** 的" if len(names) == 1 else "中的"
     answer = [f"{table.label} {sample_label}数据如下。", "",
               "| " + " | ".join(labels) + " |", "| " + " | ".join(["---"] * len(labels)) + " |"]
@@ -1192,7 +1284,9 @@ def _candidate_table(table, question, temps, page):
         values = [
             _measurement_value(row[field.index], field, maximum) for field, maximum in metrics
         ]
-        if not all(values):
+        if not all(values) or sample_data and any(
+            not _MEASUREMENT.fullmatch(row[field.index]) for field, _ in metrics
+        ):
             return None
         display = [_condition_label(row[sample_field.index])] if show_sample else []
         if temp_field:
@@ -1204,12 +1298,22 @@ def _candidate_table(table, question, temps, page):
         evidence.append(" | ".join(
             _formatted_number(cell) if _MEASUREMENT.fullmatch(cell) else cell for cell in row
         ))
+    if sample_data:
+        included = {sample_field.index, *(field.index for field, _ in metrics)}
+        if temp_field:
+            included.add(temp_field.index)
+        omitted = [header or f"第 {index + 1} 列" for index, header in enumerate(table.headers)
+                   if index not in included]
+        if omitted:
+            answer.extend(("", "未提取的列：" + "、".join(map(_safe_cell, omitted)) + "。"))
     text = "\n".join([table.caption, " | ".join(table.headers), *evidence])
     return TableLookup(page, text, "\n".join(answer), table.label)
 
 
-def lookup_pdf_table(data: bytes, question: str, *, max_pages: int) -> TableLookup | None:
-    """Find requested observations within a single verifiable digital table."""
+def inspect_pdf_table(
+    data: bytes, question: str, *, max_pages: int,
+) -> TableLookup | TableLookupAmbiguity | None:
+    """Find verifiable observations, or report choices the question doesn't distinguish."""
     if not table_lookup_requested(question) or max_pages <= 0 or len(data) > 100_000_000:
         return None
     try:
@@ -1218,28 +1322,52 @@ def lookup_pdf_table(data: bytes, question: str, *, max_pages: int) -> TableLook
     except ImportError:
         return None
     query = _normalize(question)
-    condition_query = _ELECTRODE_LABEL.sub(" ", query)
-    temps = list(dict.fromkeys(Decimal(value) for match in _TEMP_LIST.finditer(condition_query)
-                               for value in re.findall(_NUMBER, match[1])))
+    temps = table_temperatures(query)
     tables = {f"Table {(a or b).upper()}" for a, b in _TABLE.findall(query)}
     if len(tables) > 1:
         return None
     table = next(iter(tables), None)
+    implicit_electrodes = not table and _electrode_pairs(query)
     try:
         with _PDFIUM_LOCK, pdfium.PdfDocument(data) as pdf:
             if len(pdf) > min(max_pages, 64):
                 return None
             results = []
+            conflicts: list[TableLookupAmbiguity] = []
             physical_tables = 0
             for index in range(len(pdf)):
                 with closing(pdf[index]) as page:
                     for parsed in _page_tables(page, raw, table):
                         physical_tables += 1
-                        result = _candidate_table(parsed, query, temps, index + 1)
+                        result = _candidate_table(
+                            parsed, query, temps, index + 1, conflicts=conflicts,
+                        )
+                        if implicit_electrodes and (not parsed.complete or result is None) and (
+                            _select_metrics(parsed.fields, query)
+                            and _select_rows(parsed, query, temps)
+                        ):
+                            return None
                         if result is not None:
                             results.append(result)
-                if len(results) > 1 or (table and physical_tables > 1):
+                if table and physical_tables > 1:
                     return None
+                if len(results) + len(conflicts) >= 4:
+                    break
+            if len(results) > 1 or conflicts:
+                locations = dict.fromkeys(
+                    [(hit.table_label, hit.page) for hit in results]
+                    + [location for conflict in conflicts for location in conflict.locations],
+                )
+                measurements = dict.fromkeys(
+                    label for conflict in conflicts for label in conflict.measurements
+                )
+                return TableLookupAmbiguity(tuple(locations), tuple(measurements))
             return results[0] if len(results) == 1 else None
     except (OSError, ValueError, pdfium.PdfiumError):
         return None
+
+
+def lookup_pdf_table(data: bytes, question: str, *, max_pages: int) -> TableLookup | None:
+    """Return a direct answer only for a single verifiable digital table."""
+    result = inspect_pdf_table(data, question, max_pages=max_pages)
+    return result if isinstance(result, TableLookup) else None
