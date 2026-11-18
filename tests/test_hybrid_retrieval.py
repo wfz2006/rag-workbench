@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 
 import numpy as np
@@ -5,6 +6,7 @@ import pytest
 from reportlab.pdfgen.canvas import Canvas
 
 from rag_workbench.application.knowledge import KnowledgeService
+from rag_workbench.application.pipeline import RagPipeline
 
 
 class KeywordEmbedder:
@@ -87,3 +89,97 @@ def test_bilingual_sample_and_temperature_retrieve_the_english_pdf(settings):
     assert source is not None and source.lexical_passed
     assert "hole mobility of 6.1" in source.chunk.text
     assert any(r.chunk.document_name.endswith(".txt") for r in results)
+
+
+class ChinesePreferredEmbedder(NotesEmbedder):
+    signature = "chinese-preferred-test-embedding-v1"
+
+    def encode_documents(self, texts):
+        return np.asarray(
+            [[1.0, 0.0] if not text.isascii() else [0.0, 1.0] for text in texts],
+            dtype=np.float32,
+        )
+
+
+class PreparationEvidenceProvider:
+    stage_signals = (
+        "formed nano-aggregates", "particles retained their size", "interconnected fibers",
+    )
+
+    def __init__(self, *, all_stages=True):
+        self.required = self.stage_signals if all_stages else self.stage_signals[1:]
+
+    def complete(self, system, user, *, json_mode=False, history=None):
+        payload = json.loads(user)
+        supports = [
+            next((item["chunk_id"] for item in payload["evidence"] if signal in item["text"]), None)
+            for signal in self.required
+        ]
+        answerable = all(supports)
+        return json.dumps({
+            "answerable": answerable,
+            "reason": "Has direct observations for all preparation stages" if answerable else
+            "Preparation observations are missing",
+            "supporting_chunk_ids": supports if answerable else [],
+        })
+
+
+def preparation_pdf(sample):
+    stream = BytesIO()
+    pdf = Canvas(stream)
+    for line in (
+        f"Stage 1: {sample} formed nano-aggregates in the initial solution.",
+        f"Stage 2: After gelation, {sample} particles retained their size.",
+        f"Stage 3: Solvent exchange assembled {sample} into interconnected fibers.",
+        f"The electrical current of {sample} remained stable during measurements.",
+    ):
+        pdf.drawString(40, 780, line)
+        pdf.showPage()
+    pdf.save()
+    return stream.getvalue()
+
+
+@pytest.mark.parametrize("sample", ["p(g2T-T)", "P3HT"])
+def test_chinese_preparation_question_reaches_original_stage_evidence(settings, sample):
+    settings.allow_general = False
+    service = KnowledgeService(settings, ChinesePreferredEmbedder())
+    service.ingest_many([
+        ("preparation.pdf", preparation_pdf(sample)),
+        ("different-polymer.pdf", preparation_pdf("p(g2T-TT)")),
+        *[(f"note-{number}.txt", f"笔记{number}：在制备过程中有哪些结构上的变化。".encode())
+          for number in range(6)],
+    ])
+
+    result = RagPipeline(service, PreparationEvidenceProvider()).inspect(
+        f"{sample}在制备过程中有哪些结构上的变化"
+    )
+
+    assert result.route == "knowledge_base", result.reason
+    assert result.evidence is not None
+    supporting = [
+        row.chunk for row in result.candidates
+        if row.chunk.id in result.evidence.supporting_chunk_ids
+    ]
+    assert {chunk.document_name for chunk in supporting} == {"preparation.pdf"}
+    assert {chunk.page for chunk in supporting} == {1, 2, 3}
+
+
+def test_named_stages_reach_evidence_without_expanding_unstated_conditions(settings):
+    settings.allow_general = False
+    settings.top_k = 3
+    service = KnowledgeService(settings, ChinesePreferredEmbedder())
+    service.ingest_many([
+        ("preparation.pdf", preparation_pdf("p(g2T-T)")),
+        *[(f"note-{number}.txt", f"笔记{number}：凝胶化和溶剂置换过程中形貌如何演变？".encode())
+          for number in range(4)],
+    ])
+    pipeline = RagPipeline(service, PreparationEvidenceProvider(all_stages=False))
+
+    grounded = pipeline.inspect("p(g2T-T)在凝胶化和溶剂置换过程中形貌如何演变？")
+    assert grounded.route == "knowledge_base"
+    assert grounded.evidence is not None
+    assert {row.chunk.page for row in grounded.candidates
+            if row.chunk.id in grounded.evidence.supporting_chunk_ids} == {2, 3}
+
+    unconfirmed = pipeline.inspect("p(g2T-T)在无氧条件下凝胶化和溶剂置换过程中形貌如何演变？")
+    assert unconfirmed.route == "insufficient_evidence"

@@ -274,15 +274,19 @@ class MaterialsService:
         value, unit = normalized_scalar(record)
         return record.model_copy(update={"value_normalized": value, "unit_normalized": unit})
 
-    def export_csv(self, document_id=None, *, approved_only=True):
+    def export_csv(self, document_id=None, *, approved_only=True, record_snapshot=None):
         from rag_workbench.application.material_export import export_csv
 
-        return export_csv(self.repo, document_id, approved_only=approved_only)
+        return export_csv(
+            self.repo, document_id, approved_only=approved_only, record_snapshot=record_snapshot,
+        )
 
-    def export_bundle(self, document_id=None, *, approved_only=True):
+    def export_bundle(self, document_id=None, *, approved_only=True, record_snapshot=None):
         from rag_workbench.application.material_export import export_bundle
 
-        return export_bundle(self.repo, document_id, approved_only=approved_only)
+        return export_bundle(
+            self.repo, document_id, approved_only=approved_only, record_snapshot=record_snapshot,
+        )
 
 
 _NUMERIC_START = r"(?<![0-9.\^+\-])"
@@ -291,6 +295,34 @@ _NUMERIC_END = (
     r"|\s*[×xX*]\s*10|[+\-–—]\s*\d)"
 )
 _EXPONENT_LEFT = re.compile(r"\d\s*[×xX*]\s*$")
+_POWER = r"10\s*\^\s*[+-]?\d+"
+_DECIMAL = r"(?:\d+(?:\.\d+)?|\.\d+)"
+_NUMBER = rf"[+-]?(?:{_DECIMAL}\s*[×xX*]\s*{_POWER}|{_POWER}|{_DECIMAL}(?:[eE][+-]?\d+)?)"
+_BOUND = r"(?:<=|>=|[<>≤≥])"
+_APPROXIMATION = (
+    r"(?:[≈≃≅~∼～]|(?<!\w)(?:(?:approximately|about|around)\b|approx(?:\.|\b))"
+    r"|大?约为|大约|近似为|(?<![\u3400-\u9fff])约)"
+)
+_ERROR = rf"(?:±|\+/-)\s*{_NUMBER}"
+# A dash with space on the left only can be the sign of the next PDF table cell.
+_RANGE = r"(?:[-–—]\s*|\s+[-–—]\s+|\s*(?:[~～∼至]|\bto\b)\s*)"
+_COMPOUND = (
+    rf"(?:{_BOUND}\s*{_NUMBER}|{_NUMBER}\s*(?:{_ERROR}|\(\s*{_ERROR}\s*\))"
+    rf"|\[\s*{_NUMBER}\s*,\s*{_NUMBER}\s*\]|{_NUMBER}{_RANGE}{_NUMBER})"
+)
+_QUALIFIED = rf"(?:\(\s*{_COMPOUND}\s*\)\s*[×xX*]\s*{_POWER}|{_COMPOUND})"
+_COMPOUND_QUANTITY = re.compile(
+    _NUMERIC_START + rf"(?:{_APPROXIMATION}\s*(?:{_QUALIFIED}|{_NUMBER})|{_QUALIFIED})"
+    + _NUMERIC_END,
+    re.I,
+)
+_QUANTITY_START = re.compile(
+    rf"(?:(?:{_BOUND}|{_APPROXIMATION})\s*)?[\[(]?\s*(?:±|[0-9.+\-])", re.I,
+)
+_UNIT_SCALE_PREFIX = re.compile(
+    _NUMERIC_START + rf"(?:[×xX*]\s*)?{_POWER}(?:\s*[×xX*])?$",
+)
+_UNIT_SCALE_SUFFIX = re.compile(rf"\s*\)?\s*[×xX*]\s*{_POWER}" + _NUMERIC_END)
 _TERM_CLAUSE_END = re.compile(
     r"[!?;。！？；]|(?<!\bmax)(?<!\bmin)(?<!\bavg)\.(?!\d)|"
     r"[,，]\s*(?=there (?:was|were|is|are)\b|whereas\b|while\b|but\b)",
@@ -310,6 +342,18 @@ _OTHER_STATISTICS = re.compile(
 _QUALIFIED_EXTREME = re.compile(
     r"\b(?:second|third|\d+(?:st|nd|rd|th))[- ](?:highest|lowest)\b"
     r"|\b(?:one of|among) the (?:highest|lowest)\b|次[高低]",
+    re.I,
+)
+# Match the negation and comparison together so neither can be clipped from the evidence.
+_TEXTUAL_BOUND = (
+    r"(?:\b(?:(?:no|not|cannot|[a-z]+n['’]t)\s+)?(?:at\s+(?:least|most)|up\s+to"
+    r"|(?:less|more|greater|lower|higher)\s+than|below|above|under|over"
+    r"|(?:to\s+)?exceed(?:s|ing)?)\b"
+    r"|(?:(?:不[得应能]?|未|没有|并非)\s*)?(?:[低高多少大小]于|超过)|至少|至多|最高为|最低为)"
+)
+_TEXTUAL_BOUND_QUANTITY = re.compile(
+    _NUMERIC_START + rf"(?:{_APPROXIMATION}\s*)?{_TEXTUAL_BOUND}\s*"
+    rf"(?:(?:{_APPROXIMATION}|约)\s*)?{_NUMBER}",
     re.I,
 )
 _REGIME_CONTEXT = re.compile(
@@ -403,7 +447,7 @@ def _evidence_error(record, evidence, source: str | None) -> AppError | None:
     if source is None or not quote_in_source(evidence.quote, source):
         return AppError("invalid_material_evidence", "证据不在本篇文献及其补充材料原文中。")
     raw = getattr(record, evidence.field)
-    if raw and not _field_in_source(evidence.field, raw, evidence.quote, source):
+    if raw and not _field_in_source(evidence.field, raw, evidence.quote, source, record.value_raw):
         advice = (
             "请选用引文明确支持的选项，或照抄原文用词；原文未说明时请留空。"
             if evidence.field in MATERIAL_TERMS else "请按原文摘录并核对完整数值。"
@@ -414,15 +458,15 @@ def _evidence_error(record, evidence, source: str | None) -> AppError | None:
     return None
 
 
-def _field_in_source(field: str, value: str, quote: str, source: str) -> bool:
+def _field_in_source(field: str, value: str, quote: str, source: str, measured_value: str) -> bool:
     if field == "observation_origin":
         return True
     if term := standard_material_term(field, value):
         return _term_in_source(field, term, quote, source)
     if field == "unit_raw":
-        return _excerpt_contains(value, quote, source, unit=True)
+        return _excerpt_contains(value, quote, source, measured_value=measured_value)
     if field in (*STRUCTURED_FIELDS, "value_raw"):
-        return _excerpt_contains(value, quote, source)
+        return _excerpt_contains(value, quote, source, preserve_quantity=field == "value_raw")
     return quote_in_source(value, quote)
 
 
@@ -466,25 +510,59 @@ def _term_in_source(field: str, term: str, quote: str, source: str) -> bool:
     return located
 
 
-def _excerpt_contains(value: str, quote: str, block_text: str, *, unit: bool = False) -> bool:
+def _unit_keeps_scale(source: str, unit: re.Match[str], measured_value: str) -> bool:
+    if _UNIT_SCALE_SUFFIX.match(source, unit.end()):
+        return False
+    preceding = source[:unit.start()].rstrip().removesuffix("(").rstrip()
+    scale = _UNIT_SCALE_PREFIX.search(preceding)
+    if scale is None:
+        return True
+    # A power in the separately recorded adjacent value is already accounted for.
+    value = re.compile(_NUMERIC_START + re.escape(comparable_pdf_text(measured_value)) + r"$")
+    for text in (preceding, source[:unit.end()]):
+        match = value.search(text)
+        if match is not None and match.start() <= scale.start():
+            return True
+    return False
+
+
+def _excerpt_contains(
+    value: str, quote: str, block_text: str, *, measured_value: str | None = None,
+    preserve_quantity: bool = False,
+) -> bool:
     excerpt = comparable_pdf_text(value)
     quote = comparable_pdf_text(quote)
     source = comparable_pdf_text(block_text)
     if not excerpt:
         return False
     # Preserve exact value and unit tokens. An excerpt of 80 °C cannot match 180 °C or −80 °C.
-    numeric = not unit and bool(re.match(r"[0-9.+\-]", excerpt))
+    numeric = measured_value is None and bool(_QUANTITY_START.match(excerpt))
     start = _NUMERIC_START if numeric else r"(?<![A-Za-z0-9_^])"
     end = _NUMERIC_END if numeric else r"(?![A-Za-z0-9_^⁰¹²³⁴⁵⁶⁷⁸⁹])"
     pattern = re.compile(start + re.escape(excerpt) + end)
+    # A cropped value can start with words and still omit part of a reported quantity.
+    compounds = [
+        part.span()
+        for pattern in (_COMPOUND_QUANTITY, _TEXTUAL_BOUND_QUANTITY)
+        for part in pattern.finditer(source)
+    ] if numeric or preserve_quantity else []
     for match in re.finditer(re.escape(quote), source):
         # Include surrounding source when checking boundaries so a quote that ends at a
         # coefficient cannot hide the exponent immediately after it.
         for field in pattern.finditer(source, match.start()):
             if field.start() >= match.end():
                 break
-            if field.end() <= match.end() and (
-                not numeric or not _EXPONENT_LEFT.search(source[:field.start()])
+            if field.end() > match.end():
+                continue
+            if numeric and _EXPONENT_LEFT.search(source[:field.start()]):
+                continue
+            if any(
+                field.start() < right and left < field.end()
+                and (field.start() > left or field.end() < right)
+                for left, right in compounds
             ):
-                return True
+                continue
+            if measured_value is not None and not _unit_keeps_scale(source, field, measured_value):
+                continue
+            return True
     return False

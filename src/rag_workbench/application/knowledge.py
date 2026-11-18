@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+import uuid
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
@@ -23,10 +24,13 @@ from rag_workbench.application.pdf_table_lookup import (
     TableLookupAmbiguity,
     inspect_pdf_table,
     table_electrode_conditions,
+    table_labels,
+    table_lookup_intended,
     table_lookup_requested,
     table_samples,
     without_table_temperatures,
 )
+from rag_workbench.application.preparation_retrieval import ranked_preparation_matches
 from rag_workbench.application.query_features import (
     MEASUREMENT_PHRASE,
     contains_quote,
@@ -41,7 +45,13 @@ from rag_workbench.application.retrieval_expansion import (
 )
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
-from rag_workbench.domain.models import Chunk, Document, ImportFailure, RetrievalResult
+from rag_workbench.domain.models import (
+    ChatMessage,
+    Chunk,
+    Document,
+    ImportFailure,
+    RetrievalResult,
+)
 from rag_workbench.domain.ports import Embedder, VectorArray
 from rag_workbench.infrastructure.chunking import split_sections
 from rag_workbench.infrastructure.lexical import BM25Index, identifier_text, reciprocal_rank_fusion
@@ -55,7 +65,8 @@ from rag_workbench.infrastructure.repository import Repository
 from rag_workbench.infrastructure.vector_store import FaissStore, normalized
 
 QUOTE_CONTEXT_LIMIT = 4
-_TABLE_REFERENCE = re.compile(r"(?:table\s*s?\d|表\s*s?\d|该表|上表)", re.I)
+_TABLE_POINTER = re.compile(r"(?:该表|上表)(?![现明示达述情演单征面观皮层])")
+_TableTurn = tuple[str, list[Document], bool]
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +84,7 @@ def _rewrite_table_followup(question: str, previous: str) -> str | None:
     if not followup or not table_lookup_requested(previous):
         return None
     samples = table_samples(previous)
-    if not (samples or table_electrode_conditions(previous) or _TABLE_REFERENCE.search(previous)):
+    if not (samples or table_electrode_conditions(previous) or table_labels(previous)):
         return None
     kind, value = followup
     if kind == "metric" and MEASUREMENT_PHRASE.search(previous):
@@ -87,6 +98,46 @@ def _rewrite_table_followup(question: str, previous: str) -> str | None:
         if len(source.findall(previous)) == 1:
             return source.sub(lambda match: f"{match[0]} 和 {value}", previous, count=1)
     return None
+
+
+def _resolve_table_turn(
+    question: str, catalog: list[Document], prior: _TableTurn,
+) -> _TableTurn | None:
+    named, ambiguous, lookup = resolve_documents(question, catalog)
+    previous, previous_docs, previous_ambiguity = prior
+    labels = table_labels(lookup)
+    if _TABLE_POINTER.search(lookup) and not (named and labels):
+        prior_labels = table_labels(previous)
+        if (
+            (not labels and len(prior_labels) != 1) or ambiguous or previous_ambiguity
+            or (named and previous_docs and named != previous_docs)
+        ):
+            return None
+        named = named or previous_docs
+        if len(named) != 1:
+            return None
+        if not labels:
+            lookup += "\n" + prior_labels[0]
+    elif not named and material_followup(lookup):
+        if rewritten := _rewrite_table_followup(lookup, previous):
+            if not previous_docs or previous_ambiguity:
+                return None
+            return rewritten, previous_docs, False
+        if table_labels(previous) and (
+            _TABLE_POINTER.search(previous) or table_lookup_intended(previous)
+        ):
+            return None
+        return lookup, previous_docs, previous_ambiguity
+    elif not (labels and table_lookup_intended(lookup)):
+        return lookup, named, ambiguous
+
+    if not (table_samples(lookup) or table_electrode_conditions(lookup)):
+        if not named:
+            named, ambiguous = previous_docs, previous_ambiguity
+        if (not previous_ambiguity and (not previous_docs or named == previous_docs)
+                and (samples := table_samples(previous))):
+            lookup += "\n样品：" + "、".join(samples)
+    return lookup, named, ambiguous
 
 
 class KnowledgeService:
@@ -372,57 +423,104 @@ class KnowledgeService:
                 if indexed:
                     kept, updated = self.store.without_document(active, chunks, document_id)
                     updated["limits"] = active.get("limits")
+
+                original = self._raw_path(document)
+                metadata, archived = self._trash_paths(document)
+                absent = [
+                    path for path in (metadata, archived)
+                    if not (path.exists() or path.is_symlink() or path.is_junction())
+                ]
+                try:
+                    self._archive_original(document)
+                except Exception:
+                    for path in absent:
+                        try:
+                            path.unlink(missing_ok=True)
+                        except OSError:
+                            logger.warning("could not remove partial trash entry")
+                    raise
+
+                # Keep the recovery copy even if publication raises: a later retry can
+                # reuse it, and an interruption around commit cannot orphan the original.
+                if indexed:
                     self.repo.publish([d for d in documents if d.id != document_id], kept, updated)
                 else:
                     self.repo.delete_unindexed_document(document_id)
                 self._snapshot_cache = None
                 self._lexical_cache = None
                 try:
-                    self._archive_original(document)
-                except Exception as exc:
-                    self._rollback_delete(document, documents, chunks, active, indexed)
-                    raise AppError(
-                        "delete_failed",
-                        "删除未完成，文档已保留；请确认回收目录可写且原件未被占用后重试。",
-                    ) from exc
+                    original.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("delete committed; redundant original could not be removed")
         except AppError:
             raise
         except Exception as exc:
             raise AppError(
-                "delete_failed", "删除未能完整完成，请刷新列表检查；原件仍保留。"
+                "delete_failed",
+                "删除未能完整完成，请刷新列表并检查磁盘和回收目录；原件仍保留。",
             ) from exc
 
-    def _rollback_delete(
-        self,
-        document: Document,
-        documents: list[Document],
-        chunks: list[Chunk],
-        active: dict,
-        indexed: bool,
-    ) -> None:
+    def _trash_paths(self, document: Document) -> tuple[Path, Path]:
+        name = self._raw_path(document).name
+        trash = self.root / "trash"
+        return trash / f"{document.id}.json", trash / name
+
+    @staticmethod
+    def _read_optional_trash(path: Path) -> bytes | None:
+        if path.is_symlink() or path.is_junction():
+            raise AppError("trash_corrupt", "回收记录不能引用链接文件，未继续删除。")
         try:
-            if indexed:
-                self.repo.publish(documents, chunks, active)
-            else:
-                self.repo.save_document(document)
-        except Exception as exc:
-            raise AppError(
-                "delete_failed",
-                "删除未完成且状态回滚失败；请刷新列表并检查数据库、索引与原件。",
-            ) from exc
-        finally:
-            # Metadata is written before the move; a failed move leaves it behind.
-            (self.root / "trash" / f"{document.id}.json").unlink(missing_ok=True)
-            self._snapshot_cache = None
-            self._lexical_cache = None
+            return path.read_bytes()
+        except FileNotFoundError:
+            return None
+
+    def _verified_trash_original(self, path: Path, document_id: str) -> bytes | None:
+        data = self._read_optional_trash(path)
+        if data is not None and hashlib.sha256(data).hexdigest() != document_id:
+            raise AppError("original_corrupt", "已有回收原件与文档 ID 不符，未覆盖回收记录。")
+        return data
 
     def _archive_original(self, document: Document) -> None:
-        target = self.root / "trash" / f"{document.id}{document.extension}"
-        metadata = self.root / "trash" / f"{document.id}.json"
-        self.store._durable_write(metadata, document.model_dump_json().encode())
-        path = self._raw_path(document)
-        if path.exists():
-            path.replace(target)
+        metadata, target = self._trash_paths(document)
+        archived = self._verified_trash_original(target, document.id)
+        previous_metadata = self._read_optional_trash(metadata)
+        previous = None
+        previous_raw = None
+        previous_target = target
+        if previous_metadata is not None:
+            try:
+                previous = Document.model_validate_json(previous_metadata)
+            except ValidationError as exc:
+                raise AppError("trash_corrupt", "已有回收元数据损坏，未覆盖回收记录。") from exc
+            if previous.id != document.id or previous.extension not in ALLOWED_EXTENSIONS:
+                raise AppError("trash_corrupt", "已有回收元数据与文档 ID 或类型不符。")
+            _, previous_target = self._trash_paths(previous)
+            previous_raw = (
+                archived if previous_target == target
+                else self._verified_trash_original(previous_target, document.id)
+            )
+
+        try:
+            original = self._raw_path(document).read_bytes()
+        except FileNotFoundError:
+            original = None
+        if original is not None and hashlib.sha256(original).hexdigest() != document.id:
+            raise AppError("original_corrupt", "原始文件哈希不匹配，请恢复正确原件后删除。")
+
+        if previous_metadata is not None and previous != document:
+            # A re-upload can share the content ID but have a new name or source locator.
+            backup = metadata.parent / "superseded" / uuid.uuid4().hex
+            backup.mkdir(parents=True)
+            if previous_raw is not None:
+                self.store._durable_write(backup / previous_target.name, previous_raw)
+            self.store._durable_write(backup / metadata.name, previous_metadata)
+        data = original if original is not None else previous_raw
+        if archived is None and data is not None:
+            self.store._durable_write(target, data)
+        # Missing originals are still deletable. Where bytes exist, stage and verify
+        # them before publishing the metadata and leave the live original until commit.
+        if previous != document:
+            self.store._durable_write(metadata, document.model_dump_json().encode())
 
     def restore(self, document_id: str, *, require_compatible: bool = False) -> Document:
         try:
@@ -596,43 +694,71 @@ class KnowledgeService:
 
     def paper_evidence(
         self, question: str, *, previous_questions: tuple[str, ...] = (),
+        previous_turns: tuple[ChatMessage, ...] = (),
     ) -> PaperEvidence | None:
+        previous_turns = previous_turns or tuple(
+            ChatMessage(role="user", content=text) for text in previous_questions
+        )
         profile = paper_question(question, has_reference=True)
         table = table_lookup_requested(question)
-        followup = material_followup(question) if previous_questions else None
-        if self.settings.spoiler_max_page is not None or not (profile or table or followup):
+        followup = material_followup(question) if previous_turns else None
+        pointer = _TABLE_POINTER.search(question)
+        labels = table_labels(question)
+        if self.settings.spoiler_max_page is not None or not (
+            profile or table or followup or pointer or (labels and table_lookup_intended(question))
+        ):
             return None
         with self._locked():
             catalog = self.repo.documents()
-            named, ambiguous, lookup_question = resolve_documents(question, catalog)
-            table = table_lookup_requested(lookup_question)
-            if not (table or followup or paper_question(lookup_question, has_reference=True)):
-                return None
-            if not named and followup:
-                previous_text = ""
-                for previous in previous_questions[-6:]:
-                    docs, conflicting, masked = resolve_documents(previous, catalog)
-                    if not docs and material_followup(previous):
-                        previous_text = _rewrite_table_followup(masked, previous_text) or ""
-                    else:
-                        named, ambiguous = docs, conflicting
-                        previous_text = masked
-                if rewritten := _rewrite_table_followup(lookup_question, previous_text):
-                    lookup_question = rewritten
-                    table = table_lookup_requested(lookup_question)
-            elif table and previous_questions and _TABLE_REFERENCE.search(lookup_question):
-                docs, conflicting, masked = resolve_documents(previous_questions[-1], catalog)
-                same_scope = not named or not docs or named == docs
-                has_subject = (
-                    table_samples(lookup_question) or table_electrode_conditions(lookup_question)
+            prior: _TableTurn = ("", [], False)
+            reference = None
+            if followup or pointer or labels:
+                for previous in previous_turns[-6:]:
+                    resolved = _resolve_table_turn(previous.content, catalog, prior)
+                    reference = previous.table_reference
+                    if reference is None:
+                        prior = resolved or ("", [], False)
+                        continue
+                    documents = [
+                        doc for doc in catalog
+                        if doc.id == reference.document_id and doc.status == "ready"
+                    ]
+                    lookup = resolved[0] if resolved else resolve_documents(
+                        previous.content, catalog,
+                    )[2]
+                    if not table_labels(lookup):
+                        lookup += "\n" + reference.label
+                    prior = (lookup, documents, not documents)
+            resolved = _resolve_table_turn(question, catalog, prior)
+            if reference is not None and prior[2] and (
+                resolved is None or (resolved[2] and not resolved[1])
+            ):
+                message = "上一轮引用的论文当前不可用。请指定可用论文和表号。"
+                return PaperEvidence(answer=message, reason=message)
+            if resolved is None:
+                message = (
+                    "无法确定“该表”指的是哪张表。请明确论文文件名和表号。"
+                    if pointer else
+                    "无法核实这次追问沿用的表格条件。请明确论文文件名、表号和实验条件。"
                 )
-                if not has_subject:
-                    if not named:
-                        named, ambiguous = docs, conflicting
-                    if same_scope and (samples := table_samples(masked)):
-                        lookup_question += "\n样品：" + "、".join(samples)
+                return PaperEvidence(answer=message, reason=message)
+            lookup_question, named, ambiguous = resolved
+            table = table_lookup_requested(lookup_question)
+            labels = table_labels(lookup_question)
+            strict_table = bool(labels) and (
+                bool(_TABLE_POINTER.search(lookup_question))
+                or table_lookup_intended(lookup_question)
+            )
+            if not (
+                table or followup or strict_table
+                or paper_question(lookup_question, has_reference=True)
+            ):
+                return None
             if ambiguous:
                 message = "同一个名称匹配到多份文档。请写明完整文件名，或重命名同名文档。"
+                return PaperEvidence(answer=message, reason=message)
+            if strict_table and (len(labels) != 1 or len(named) > 1):
+                message = "请在一次表格查找中指定一份论文和一个表号。"
                 return PaperEvidence(answer=message, reason=message)
             if len(named) > 2:
                 message = "请在一次问题中指定一到两份文档。"
@@ -649,7 +775,11 @@ class KnowledgeService:
                 try:
                     originals = [(doc, self._verified_original(doc)) for doc in candidates]
                 except AppError:
-                    return None  # Inferred candidates do not make the ordinary RAG path fail.
+                    if not strict_table:
+                        return None  # Inferred sources do not make the ordinary RAG path fail.
+                    originals = []
+            elif strict_table and not table:
+                originals = []  # A qualified lookup may be blocked before PDF extraction.
             else:
                 originals = [(doc, self._verified_original(doc)) for doc in named]
 
@@ -677,10 +807,19 @@ class KnowledgeService:
                         "和".join(choices) if choices else "所问的样品或实验条件"
                     ) + "后再查。"
                     return PaperEvidence(answer=message, reason=message)
+                if (reference is not None and doc.id == reference.document_id
+                        and hit.table_label == reference.label and hit.page != reference.page):
+                    message = "无法核实上一轮引用的表格页码。请明确论文和表号。"
+                    return PaperEvidence(answer=message, reason=message)
                 source = page_source(doc, hit.page, hit.text, method="pdf_table")
                 reason = f"已在 {doc.name} 第 {hit.page} 页的 {hit.table_label} 定位所问表格行。"
                 return PaperEvidence([source], answer=hit.answer, reason=reason)
 
+        if strict_table:
+            # Whole-paper passages may contain the same metric in another table.
+            location = f"{named[0].name} 的 {labels[0]}" if named else labels[0]
+            message = f"未能从 {location} 核实所问数据。请检查表号、指标或实验条件。"
+            return PaperEvidence(answer=message, reason=message)
         if not named:
             return None
         budget = PAPER_BUDGET // len(named)
@@ -806,7 +945,13 @@ class KnowledgeService:
                     (first if counts[source_id] < 2 else deferred).append(i)
                     counts[source_id] += 1
                 fused = first + deferred
-            literature_matches = set(literature)
+            preparation = (
+                ranked_preparation_matches(focus, chunks, self._source_catalog, limit=min(limit, 4))
+                if not scoped and self.settings.spoiler_max_page is None else []
+            )
+            if preparation:
+                fused = list(dict.fromkeys(preparation + fused))
+            literature_matches = set(literature) | set(preparation)
             if scoped and len(fused) < limit:
                 # A named note can rank outside both global candidate pools.
                 # Prefer its locally matching passages and keep their real dense scores.
@@ -819,10 +964,12 @@ class KnowledgeService:
                 fused.extend(remaining[:limit - len(fused)])
 
             def lexical_passed(index: int) -> bool:
-                return index in literature_matches or (lexical_scores[index] > 0 and (
-                    coverage[index] >= self.settings.lexical_min_coverage
-                    or index in anchored_pdfs
-                ))
+                return index in literature_matches or (
+                    lexical_scores[index] > 0 and (
+                        coverage[index] >= self.settings.lexical_min_coverage
+                        or index in anchored_pdfs
+                    )
+                )
             # Lexical-only candidates may fall outside the dense candidate pool.
             chunks_by_document: dict[str, list[Chunk]] = {}
             chunks_by_ordinal: dict[tuple[str, int], Chunk] = {}

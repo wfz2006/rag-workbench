@@ -13,10 +13,12 @@ from rag_workbench.domain.materials import LiteratureDocument, MaterialRecord
 from rag_workbench.infrastructure.parsing import quote_in_source
 
 
-def _rows(repo, document_id, approved_only):
+def _rows(repo, document_id, approved_only, record_snapshot):
+    records = repo.records(document_id) if record_snapshot is None else record_snapshot
     return [
-        row for row in repo.records(document_id)
-        if not approved_only or row.status == "approved"
+        row for row in records
+        if (document_id is None or row.document_id == document_id)
+        and (not approved_only or row.status == "approved")
     ]
 
 
@@ -42,9 +44,10 @@ def _csv_bytes(rows, fields):
     return output.getvalue().encode("utf-8-sig")
 
 
-def export_csv(repo, document_id=None, *, approved_only=True):
+def export_csv(repo, document_id=None, *, approved_only=True, record_snapshot=None):
+    records = _rows(repo, document_id, approved_only, record_snapshot)
     return _csv_bytes(
-        [row.model_dump(mode="json") for row in _rows(repo, document_id, approved_only)],
+        [row.model_dump(mode="json") for row in records],
         list(MaterialRecord.model_fields),
     )
 
@@ -131,8 +134,8 @@ def export_analysis(repo, rows, settings, plot_rows, *, chart_spec=None, chart_f
     return output.getvalue()
 
 
-def export_bundle(repo, document_id=None, *, approved_only=True):
-    records = _rows(repo, document_id, approved_only)
+def export_bundle(repo, document_id=None, *, approved_only=True, record_snapshot=None):
+    records = _rows(repo, document_id, approved_only, record_snapshot)
     revisions = {
         row.id: [revision for revision in repo.revisions(row.id)
                  if revision["revision"] <= row.revision]

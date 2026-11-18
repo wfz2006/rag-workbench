@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,6 +29,8 @@ from rag_workbench.infrastructure.parsing import (
     parse_document,
     safe_display_name,
 )
+from rag_workbench.infrastructure.repository import Repository
+from rag_workbench.infrastructure.vector_store import FaissStore
 
 PACK_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,39}$")
 RESERVED_PACK_IDS = {".staging", "production", "sandbox", "knowledge", "user-data"}
@@ -1080,6 +1083,72 @@ def _read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
+def _lint_pack_snapshot(
+    data_dir: Path,
+    settings: Settings,
+    expected_names: dict[str, set[str]],
+    embedder: Embedder | None,
+) -> list[LintCheck]:
+    data_dir = data_dir.resolve()
+    indexes = data_dir / "indexes"
+    if not indexes.is_dir():
+        return [LintCheck(id="data_stats", status="fail", message="运行数据缺少索引目录。")]
+
+    try:
+        knowledge = KnowledgeService(settings, embedder) if embedder is not None else None
+        lock = knowledge.lock if knowledge else FileLock(data_dir / "knowledge.lock", timeout=120)
+        with lock:
+            repository = knowledge.repo if knowledge else Repository(data_dir / "metadata.sqlite3")
+            documents = {document.id: document for document in repository.documents()}
+            chunks = repository.chunks()
+            active = repository.get_state("active")
+            if not documents or not chunks or not isinstance(active, dict) or not active:
+                return [LintCheck(
+                    id="data_stats", status="fail", message="运行数据没有文档、文本块或活动索引。"
+                )]
+            store = knowledge.store if knowledge else FaissStore(indexes)
+            signature = knowledge.signature if knowledge else active.get("signature", "")
+            store.load(active, chunks, signature)
+    except (AppError, OSError, ValueError, sqlite3.Error) as exc:
+        return [LintCheck(id="data_stats", status="fail", message=f"索引检查失败：{exc}。")]
+
+    checks = [LintCheck(
+        id="data_stats",
+        status="pass",
+        message=f"活动索引有效：{len(documents)} 文档 / {len(chunks)} 块。",
+    )]
+    if knowledge is None:
+        checks.append(LintCheck(
+            id="data_model",
+            status="warn",
+            message="未提供 embedder，未核对当前模型与索引签名的兼容性。",
+        ))
+    indexed_ids = {chunk.document_id for chunk in chunks}
+    # KnowledgeService deduplicates by content ID; identical corpus files can share
+    # one runtime document whose name is one of that content's declared aliases.
+    for document_id, names in expected_names.items():
+        document = documents.get(document_id)
+        if (
+            document is None
+            or document.name not in names
+            or document.status != "ready"
+            or document_id not in indexed_ids
+        ):
+            label = "、".join(sorted(names))
+            checks.append(LintCheck(
+                id="data_documents",
+                status="fail",
+                message=f"运行索引中没有与生成正文名称及 SHA-256 匹配的就绪文档：{label}。",
+            ))
+    for document_id in sorted((documents.keys() | indexed_ids) - expected_names.keys()):
+        document = documents.get(document_id)
+        label = document.name if document else document_id
+        checks.append(LintCheck(
+            id="data_documents", status="fail", message=f"运行库包含清单未登记的正文：{label}。"
+        ))
+    return checks
+
+
 def pack_lint(
     pack_dir: Path,
     data_dir: Path | None = None,
@@ -1087,7 +1156,7 @@ def pack_lint(
     secret_values: list[str] | None = None,
     embedder: Embedder | None = None,
 ) -> PackLintResult:
-    pack_dir = Path(pack_dir)
+    pack_dir = Path(pack_dir).resolve()
     if not pack_dir.is_dir():
         return PackLintResult(
             pack_id=pack_dir.name,
@@ -1321,6 +1390,7 @@ def pack_lint(
 
     generated_rows: list[dict] = []
     generated_paths: set[str] = set()
+    generated_documents: dict[str, set[str]] = {}
     generated_path = _safe_relative(
         pack_dir, manifest.generated_manifest if manifest else "generated_manifest.jsonl"
     )
@@ -1335,6 +1405,9 @@ def pack_lint(
                 f"generated_manifest 无法读取（{type(exc).__name__}）。",
             )
     for row in generated_rows:
+        if not isinstance(row, dict):
+            add("generated_manifest", "fail", "生成正文清单每行必须是 JSON 对象。")
+            continue
         relative = row.get("path")
         target = _safe_relative(pack_dir, relative or "")
         if target is None or not target.is_file():
@@ -1344,8 +1417,11 @@ def pack_lint(
         if normalized in generated_paths:
             add("generated_path", "fail", f"生成正文路径重复：{normalized}。")
         generated_paths.add(normalized)
-        if _sha256(target.read_bytes()) != row.get("sha256"):
+        document_id = _sha256(target.read_bytes())
+        if document_id != row.get("sha256"):
             add("generated_hash", "fail", "生成正文 sha256 与清单不一致。")
+        else:
+            generated_documents.setdefault(document_id, set()).add(target.name)
         if row.get("source_id") not in source_ids:
             add("generated_source", "fail", "生成正文引用了不存在的 source_id。")
         if not normalized.startswith("corpus/"):
@@ -1392,51 +1468,7 @@ def pack_lint(
         elif settings is None:
             add("data_stats", "fail", "设置无效，无法检查索引。")
         else:
-            try:
-                from rag_workbench.infrastructure.repository import Repository
-
-                repository = Repository(data_dir / "metadata.sqlite3")
-                documents_in_index = repository.documents()
-                chunks = repository.chunks()
-                active = repository.get_state("active")
-                if not documents_in_index or not chunks or not active:
-                    add("data_stats", "fail", "运行数据没有文档、文本块或活动索引。")
-                else:
-                    generation = active.get("generation", "")
-                    index_dir = data_dir / "indexes" / generation
-                    if not (
-                        (index_dir / "index.faiss").is_file()
-                        and (index_dir / "manifest.json").is_file()
-                    ):
-                        add("data_stats", "fail", "活动索引文件缺失。")
-                    elif embedder is not None:
-                        stats = KnowledgeService(settings, embedder).stats()
-                        if stats["index_status"] != "ready":
-                            add(
-                                "data_stats",
-                                "fail",
-                                f"索引状态为 {stats['index_status']}，不是 ready。",
-                            )
-                        else:
-                            add(
-                                "data_stats",
-                                "pass",
-                                f"索引就绪：{stats['documents']} 文档 / {stats['chunks']} 块。",
-                            )
-                    else:
-                        add(
-                            "data_stats",
-                            "warn",
-                            f"索引结构存在（{len(documents_in_index)} 文档 / {len(chunks)} 块），"
-                            "但未提供 embedder，未校验向量签名。",
-                        )
-                    document_names = {document.name for document in documents_in_index}
-                    for row in generated_rows:
-                        name = PurePath(row.get("path", "")).name
-                        if name and name not in document_names:
-                            add("data_documents", "fail", f"索引中缺少生成正文：{name}。")
-            except (AppError, OSError, ValueError) as exc:
-                add("data_stats", "fail", f"索引检查失败：{exc}。")
+            checks.extend(_lint_pack_snapshot(data_dir, settings, generated_documents, embedder))
     else:
         add("data_dir", "warn", "未提供运行数据目录，跳过索引检查。")
 

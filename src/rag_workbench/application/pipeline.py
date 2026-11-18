@@ -272,8 +272,8 @@ class RagPipeline:
             paper_evidence = getattr(self.knowledge, "paper_evidence", None)
             paper = None
             if paper_evidence and not self.teaching_profile:
-                previous = tuple(m.content for m in context_history if m.role == "user")
-                paper = paper_evidence(question.strip(), previous_questions=previous)
+                previous = tuple(m for m in context_history if m.role == "user")
+                paper = paper_evidence(question.strip(), previous_turns=previous)
             if paper is not None:
                 inspection.candidates = paper.candidates
                 if paper.answer is not None:

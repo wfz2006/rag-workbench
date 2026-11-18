@@ -104,9 +104,17 @@ class AnswerResult(Contract):
     persistence_error: str | None = None
 
 
+class TableReference(Contract):
+    document_id: str
+    label: str
+    page: int = Field(ge=1)
+
+
 class ChatMessage(Contract):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=30000)
+    # Local context recovered from a saved citation, never part of the model prompt.
+    table_reference: TableReference | None = Field(default=None, exclude=True)
 
 
 GenerationPhase = Literal[

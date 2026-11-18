@@ -8,10 +8,17 @@ from reportlab.pdfgen.canvas import Canvas
 from rag_workbench.application.paper_sources import paper_passages
 from rag_workbench.application.pipeline import RagPipeline
 from rag_workbench.application.prompts import EVIDENCE_SYSTEM
+from rag_workbench.bootstrap import build_services
 from rag_workbench.domain.models import ChatMessage, Document, Section
 
 from .fakes import FakeProvider
-from .test_pdf_table_lookup import pdfium, ruled_table
+from .test_pdf_table_lookup import (
+    condition_table,
+    pdfium,
+    qualified_table,
+    ruled_table,
+    solvent_free_table,
+)
 
 
 def paper(*pages):
@@ -216,8 +223,163 @@ def test_table_followup_keeps_the_previously_named_paper(knowledge):
         previous_questions=("first-study.pdf 里的 D42-OTS 在60℃的迁移率是多少？",),
     )
 
-    assert evidence.answer is None
-    assert {r.chunk.document_name for r in evidence.candidates} == {"first-study.pdf"}
+    assert not evidence.candidates
+    assert "first-study.pdf" in evidence.answer and "Table 1" in evidence.answer
+
+
+def test_table_pointer_recovers_the_verified_document_and_label(knowledge):
+    knowledge.ingest_many([
+        ("薄膜文献1.pdf", solvent_free_table()),
+        ("文献3(1).pdf", paper(["Review discussion of film processing."])),
+        ("文献4(1).pdf", paper(["Another paper without device tables."])),
+    ])
+    services = build_services(knowledge.settings, embedder=knowledge.embedder, provider=object())
+    session = services.repo.new_session()
+    first_question = "Table 1 中 PY3-OTS 在 60℃ 的迁移率是多少？"
+
+    first = services.ask(session, first_question)
+    assert first.mode == "knowledge_base"
+    source, = first.sources
+    assert (source.chunk.document_name, source.chunk.page) == ("薄膜文献1.pdf", 3)
+    assert "2.3 × 10⁻³" in first.answer
+    saved_question = services.history(session)[0]
+    assert saved_question.table_reference.document_id == source.chunk.document_id
+    assert "table_reference" not in saved_question.model_dump()
+
+    second = services.ask(session, "该表中 60℃ 的阈值电压是多少？")
+    assert second.mode == "knowledge_base", second.answer
+    source, = second.sources
+    assert (source.chunk.document_name, source.chunk.page) == ("薄膜文献1.pdf", 3)
+    assert "−8" in second.answer
+
+
+@pytest.mark.parametrize("replacement_name", ["another-study.pdf", "original-study.pdf"])
+def test_saved_table_pointer_never_substitutes_a_new_paper(knowledge, replacement_name):
+    original = knowledge.ingest("original-study.pdf", solvent_free_table())
+    knowledge.ingest("review.pdf", paper(["Notes on film preparation."]))
+    services = build_services(knowledge.settings, embedder=knowledge.embedder, provider=object())
+    session = services.repo.new_session()
+    question = "Table 1 中 PY3-OTS 在 60℃ 的迁移率是多少？"
+    source, = services.ask(session, question).sources
+    assert source.chunk.document_id == original.id
+
+    knowledge.delete(original.id)
+    with (
+        pdfium.PdfDocument.new() as merged,
+        pdfium.PdfDocument(paper(["Another study."])) as intro,
+        pdfium.PdfDocument(solvent_free_table()) as data,
+    ):
+        merged.import_pages(intro)
+        merged.import_pages(data)
+        output = io.BytesIO()
+        merged.save(output)
+    replacement = knowledge.ingest(replacement_name, output.getvalue())
+    reopened = build_services(knowledge.settings, embedder=knowledge.embedder, provider=object())
+    for followup in (
+        "该表中 60℃ 的阈值电压是多少？",
+        "该表（Table 1）中 PY3-OTS 在 60℃ 的阈值电压是多少？",
+        "阈值电压呢？",
+    ):
+        result = reopened.ask(session, followup)
+        assert result.mode == "insufficient_evidence", followup
+        assert not result.sources
+    explicit = reopened.ask(session, f"{replacement_name} {question}")
+    assert [s.chunk.document_id for s in explicit.sources] == [replacement.id]
+
+
+@pytest.fixture
+def paper_with_two_tables(knowledge):
+    threshold = condition_table(
+        ("Sample", "Annealing temp. (°C)", "VT(V)"),
+        (("para-IDT(QNCN)2", "80", "-40"), ("meta-IDT(QNCN)2", "80", "-42")),
+    )
+    with (
+        pdfium.PdfDocument.new() as merged,
+        pdfium.PdfDocument(qualified_table()) as first,
+        pdfium.PdfDocument(threshold) as second,
+    ):
+        merged.import_pages(first)
+        merged.import_pages(second)
+        data = io.BytesIO()
+        merged.save(data)
+    return knowledge.ingest("thin-films-study.pdf", data.getvalue()).name
+
+
+@pytest.mark.parametrize("reference", ["该表", "上表", "Table 4"])
+def test_explicit_or_inherited_table_miss_cannot_use_another_table(
+    knowledge, paper_with_two_tables, reference,
+):
+    provider = FakeProvider()
+    pipeline = RagPipeline(knowledge, provider)
+    first = (f"{paper_with_two_tables} 的 Table 4 中 meta-IDT(QNCN)2 "
+             "在 80℃ 退火的线性迁移率是多少？")
+    result = pipeline.answer(first)
+    assert "80 °C | 0.021" in result.answer
+    assert [source.chunk.page for source in result.sources] == [1]
+    history = [ChatMessage(role="user", content=first),
+               ChatMessage(role="assistant", content=result.answer)]
+
+    missing = pipeline.answer(f"{reference}中 80℃ 退火的阈值电压是多少？", history)
+    assert missing.mode == "insufficient_evidence"
+    assert not missing.sources
+    assert not provider.calls  # The containing paper is not evidence for a different table.
+
+    explicit = pipeline.answer("根据 Table 2 回答 80℃ 退火的阈值电压", history)
+    assert explicit.mode == "knowledge_base" and "80 °C | −42" in explicit.answer
+    assert [source.chunk.page for source in explicit.sources] == [2]
+
+
+def test_table_pointer_requires_an_unambiguous_previous_table(knowledge, paper_with_two_tables):
+    first = (f"{paper_with_two_tables} 的 Table 4 和 Table 2 中 meta-IDT(QNCN)2 "
+             "在 80℃ 的器件数据")
+    provider = FakeProvider()
+    result = RagPipeline(knowledge, provider).answer(
+        "该表中 meta-IDT(QNCN)2 在 80℃ 退火的阈值电压是多少？",
+        [ChatMessage(role="user", content=first)],
+    )
+    assert result.mode == "insufficient_evidence"
+    assert not result.sources and not provider.calls
+
+
+def test_repeated_table_pointer_keeps_the_named_document(knowledge, paper_with_two_tables):
+    knowledge.ingest("other-study.pdf", qualified_table())
+    pipeline = RagPipeline(knowledge, FakeProvider())
+    first = (f"{paper_with_two_tables} 的 Table 4 中 meta-IDT(QNCN)2 "
+             "在 80℃ 退火的线性迁移率是多少？")
+    history = [ChatMessage(role="user", content=first)]
+    for question in (
+        "该表中 meta-IDT(QNCN)2 在 80℃ 退火的饱和迁移率是多少？",
+        "上表中 80℃ 退火的饱和迁移率是多少？",
+    ):
+        result = pipeline.answer(question, history)
+        source, = result.sources
+        assert (source.chunk.document_name, source.chunk.page) == (paper_with_two_tables, 1)
+        assert "80 °C | 0.043" in result.answer
+        history.append(ChatMessage(role="user", content=question))
+
+
+@pytest.mark.parametrize("question", [
+    "该表述是否严谨？",
+    "该表达有什么问题？",
+    "该表示方法对吗？",
+    "以上表现怎么评价？",
+    "薄膜上表面形貌怎么样？",
+    "该表征说明了什么？",
+])
+def test_non_table_phrases_keep_general_route(knowledge, question):
+    assert RagPipeline(knowledge, FakeProvider()).answer(question).mode == "general"
+
+
+def test_short_followup_cannot_drop_unverified_table_conditions(knowledge, paper_with_two_tables):
+    first = (f"{paper_with_two_tables} 的 Table 4 中 meta-IDT(QNCN)2 "
+             "用氯苯制膜且在 80℃ 退火的迁移率是多少？")
+    provider = FakeProvider()
+    pipeline = RagPipeline(knowledge, provider)
+    assert pipeline.answer(first).mode == "insufficient_evidence"
+
+    result = pipeline.answer("阈值电压呢？", [ChatMessage(role="user", content=first)])
+    assert result.mode == "insufficient_evidence"
+    assert not result.sources and not provider.calls
 
 
 def test_short_table_followups_keep_scope_and_replace_only_the_requested_part(knowledge):

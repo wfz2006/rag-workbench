@@ -1,6 +1,9 @@
 """Material workspace UI uses local data and explicit remote-call consent."""
 
+import csv
+import io
 import json
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -197,6 +200,85 @@ def test_export_is_prepared_once_and_invalidates_on_filter_change(settings, monk
     app.checkbox(key="materials_approved_only").uncheck().run()
     assert not _export_downloads(app)
     assert len(calls) == 1
+
+
+def test_export_downloads_share_a_snapshot_when_another_window_revises(settings, monkeypatch):
+    from rag_workbench.application.materials import MaterialsService
+    from rag_workbench.domain.materials import EvidenceReference, MaterialRecord
+
+    service = MaterialsService(settings)
+    other = MaterialsService(settings)
+    doc = service.ingest("paper.txt", b"Alpha threshold voltage 1.0 V; revised 2.0 V.")
+    block, = service.repo.blocks(doc.id)
+    values = dict(material_name="Alpha", property_name="threshold voltage",
+                  value_raw="1.0", unit_raw="V")
+    row = service.add_record(MaterialRecord(
+        id="alpha", document_id=doc.id, **values,
+        evidence=[EvidenceReference(field=k, block_id=block.id, quote=block.text) for k in values],
+    ))
+    service.review(row.id, row, status="approved")
+    service.add_record(row.model_copy(update={"id": "beta", "evidence": []}))
+    app = _app(service, settings, monkeypatch)
+    original = service.export_csv
+
+    def revise_after_csv(*args, **kwargs):
+        output = original(*args, **kwargs)
+        current = other.repo.record(row.id)
+        other.review(current.id, current.model_copy(update={"value_raw": "2.0"}), status="approved")
+        return output
+
+    with monkeypatch.context() as patch:
+        patch.setattr(service, "export_csv", revise_after_csv)
+        app.button(key="materials_prepare_export").click().run()
+    assert not app.exception
+    assert len(_export_downloads(app)) == 2
+    assert other.repo.record(row.id).revision == 3
+    output = app.session_state["materials_prepared_export"]
+    with zipfile.ZipFile(io.BytesIO(output["bundle"])) as archive:
+        assert output["csv"] == archive.read("measurements.csv")
+        dataset = json.loads(archive.read("dataset.json"))
+    exported, = dataset["records"]
+    assert (exported["id"], exported["revision"], exported["value_raw"]) == ("alpha", 2, "1.0")
+    assert [r["revision"] for r in dataset["revisions"]["alpha"]] == [1, 2]
+
+    app.run()
+    assert not _export_downloads(app)
+    app.checkbox(key="materials_approved_only").uncheck().run()
+    app.button(key="materials_prepare_export").click().run()
+    output = app.session_state["materials_prepared_export"]
+    with zipfile.ZipFile(io.BytesIO(output["bundle"])) as archive:
+        assert output["csv"] == archive.read("measurements.csv")
+    rows = csv.DictReader(io.StringIO(output["csv"].decode("utf-8-sig")))
+    assert {(r["id"], r["revision"], r["status"]) for r in rows} == {
+        ("alpha", "3", "approved"), ("beta", "1", "candidate"),
+    }
+
+
+def test_export_keeps_prepared_csv_when_bundle_fails_on_unreadable_original(settings, monkeypatch):
+    from rag_workbench.application.materials import MaterialsService
+    from rag_workbench.domain.materials import EvidenceReference, MaterialRecord
+
+    service = MaterialsService(settings)
+    doc = service.ingest("paper.txt", b"Alpha threshold voltage 1.0 V.")
+    block, = service.repo.blocks(doc.id)
+    values = dict(
+        material_name="Alpha", property_name="threshold voltage", value_raw="1.0", unit_raw="V",
+    )
+    row = service.add_record(MaterialRecord(
+        id="alpha", document_id=doc.id, **values,
+        evidence=[EvidenceReference(field=k, block_id=block.id, quote=block.text) for k in values],
+    ))
+    service.review(row.id, row, status="approved")
+    (service.repo.originals / f"{doc.id}{doc.extension}").unlink()
+
+    app = _app(service, settings, monkeypatch)
+    app.button(key="materials_prepare_export").click().run()
+    assert not app.exception
+    assert any("CSV 仍可下载" in message.value for message in app.error)
+    assert [button.label for button in _export_downloads(app)] == ["下载 CSV"]
+    output = app.session_state["materials_prepared_export"]
+    rows = list(csv.DictReader(io.StringIO(output["csv"].decode("utf-8-sig"))))
+    assert [(r["id"], r["value_raw"]) for r in rows] == [("alpha", "1.0")]
 
 
 def test_supplement_preview_matches_its_extraction_scope(settings, monkeypatch):

@@ -673,7 +673,8 @@ def _exports(service, document) -> None:
         "CSV 的规范值列只填写可换算的单值。范围、带误差的数值和单位不明的记录保留原文；"
         "已批准的范围与误差可在「跨论文分析」查看和导出。"
     )
-    records = service.repo.records(document.id)
+    # Use the records behind the count and fingerprint for both downloads.
+    records = tuple(service.repo.records(document.id))
     count = sum(record.status == "approved" or not approved_only for record in records)
     st.caption(f"本次导出：{document.name} · {count} 条实验记录。")
     if not count:
@@ -697,14 +698,13 @@ def _exports(service, document) -> None:
         prepared = None
         try:
             with st.spinner("正在校验证据与原件，准备导出文件…"):
+                options = {"approved_only": approved_only, "record_snapshot": records}
                 prepared = {
                     "fingerprint": fingerprint,
-                    "csv": service.export_csv(document.id, approved_only=approved_only),
+                    "csv": service.export_csv(document.id, **options),
                 }
                 try:
-                    prepared["bundle"] = service.export_bundle(
-                        document.id, approved_only=approved_only,
-                    )
+                    prepared["bundle"] = service.export_bundle(document.id, **options)
                 except AppError as exc:
                     prepared["bundle_error"] = f"完整数据包未能生成：{exc}。CSV 仍可下载。"
             st.session_state["materials_prepared_export"] = prepared

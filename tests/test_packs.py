@@ -5,6 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from rag_workbench.application.knowledge import KnowledgeService
 from rag_workbench.application.packs import (
     PackBuilder,
     PackCatalog,
@@ -12,6 +13,7 @@ from rag_workbench.application.packs import (
     load_pack_settings,
     pack_lint,
 )
+from rag_workbench.cli import main
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
 
@@ -193,6 +195,88 @@ def test_pack_lint_detects_tampered_corpus_source_and_readme(tmp_path):
     (result.pack_dir / "README.md").unlink()
     lint = pack_lint(result.pack_dir, result.data_dir)
     assert lint.errors
+
+
+def test_pack_lint_rejects_same_name_replacement_in_running_index(tmp_path, monkeypatch, capsys):
+    base = build_settings(tmp_path)
+    embedder = FakeEmbedder()
+    before, after = "保管期限为三年。", "保管期限为十年。"
+    pack = PackBuilder(base, embedder).build(spec(), [("guide.txt", before.encode())])
+    knowledge = KnowledgeService(load_pack_settings(pack.pack_id, base=base), embedder)
+    document = pack.documents[0]
+    assert read_manifest(pack.pack_dir)[0]["sha256"] == document.id
+
+    knowledge.delete(document.id)
+    replacement = knowledge.ingest(document.name, after.encode())
+    assert replacement.id != document.id
+    assert knowledge.stats()["index_status"] == "ready"
+    assert knowledge.retrieve("保管期限")[0].chunk.text == after
+
+    lint = pack_lint(pack.pack_dir, pack.data_dir, embedder=embedder)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_PACKS_DIR", str(base.packs_dir))
+    monkeypatch.setenv("RAG_PACKS_DATA_DIR", str(base.packs_data_dir))
+    monkeypatch.setattr("sys.argv", ["rag", "pack-lint", pack.pack_id])
+    exit_code = main()
+    cli_checks = json.loads(capsys.readouterr().out)["checks"]
+    assert exit_code == 1
+    assert any(
+        check["id"] == "data_documents" and check["status"] == "fail" for check in cli_checks
+    )
+    assert any(check.id == "data_documents" and check.status == "fail" for check in lint.checks)
+
+
+def test_pack_lint_validates_index_contents_without_an_embedder(tmp_path):
+    base = build_settings(tmp_path)
+    embedder = FakeEmbedder()
+    pack = PackBuilder(base, embedder).build(spec(), [("guide.txt", "保管期限为三年。".encode())])
+    knowledge = KnowledgeService(load_pack_settings(pack.pack_id, base=base), embedder)
+    active = knowledge.repo.get_state("active")
+    (pack.data_dir / "indexes" / active["generation"] / "index.faiss").write_bytes(b"broken")
+
+    lint = pack_lint(pack.pack_dir, pack.data_dir)
+
+    assert any(check.id == "data_stats" and check.status == "fail" for check in lint.checks)
+
+
+def test_pack_lint_allows_content_aliases_and_checks_each_indexed_document(tmp_path):
+    base = build_settings(tmp_path)
+    embedder = FakeEmbedder()
+    pack = PackBuilder(base, embedder).build(spec(), [("guide.txt", "保管期限为三年。".encode())])
+    knowledge = KnowledgeService(load_pack_settings(pack.pack_id, base=base), embedder)
+    row = read_manifest(pack.pack_dir)[0]
+    original = pack.pack_dir / row["path"]
+    paths = [original, original.parent / "alias.md", original.parent / "revision" / original.name]
+    original_data = original.read_bytes()
+    variant_data = "到期后需复核。".encode()
+    paths[1].write_bytes(original_data)
+    paths[2].parent.mkdir()
+    paths[2].write_bytes(variant_data)
+    rows = [
+        {
+            **row,
+            "path": path.relative_to(pack.pack_dir).as_posix(),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+        for path, data in zip(paths, (original_data, original_data, variant_data), strict=True)
+    ]
+    (pack.pack_dir / "generated_manifest.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in rows), encoding="utf-8"
+    )
+    knowledge.ingest_many([(paths[1].name, original_data), (paths[2].name, variant_data)])
+    assert len(knowledge.list_documents()) == 2
+    assert not pack_lint(pack.pack_dir, pack.data_dir).errors
+
+    knowledge.ingest("unlisted.md", "清单外的内容。".encode())
+    lint = pack_lint(pack.pack_dir, pack.data_dir)
+    assert any(check.id == "data_documents" and check.status == "fail" for check in lint.checks)
+
+    without_runtime = pack_lint(pack.pack_dir)
+    assert any(
+        check.id == "data_dir" and check.status == "warn" and "跳过索引检查" in check.message
+        for check in without_runtime.checks
+    )
+    assert not without_runtime.errors
 
 
 def test_pack_lint_rejects_secret_and_extra_corpus_file(tmp_path):

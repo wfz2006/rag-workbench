@@ -181,6 +181,9 @@ def test_english_temperature_list_with_serial_comma():
     "What is the mobility of D42-OTS at 60 °C with a drain voltage of 20 V?",
     "What is the mobility of D42-OTS at 60 °C at 20 V?",
     "What is the mobility of D42-OTS at 60 °C after 2 seconds?",
+    "Table 1 中 D42-OTS 用氯苯制膜且在 60℃ 的迁移率是多少？",
+    "What is the mobility of D42-OTS at 60 °C with chlorobenzene as the solvent in Table 1?",
+    "What is the mobility of D42-OTS at 60 °C using chloroform in Table 1?",
     "What is the mobility and subthreshold swing of D42-OTS at 60 °C?",
     "What is the mobility and contact resistance of D42-OTS at 60 °C?",
     "D42-OTS 在60℃的迁移率和开启电压分别是多少？",
@@ -263,6 +266,10 @@ def test_caption_between_rules_and_multiline_qualified_headers():
     "Table 4 中 meta-IDT(QNCN)2 在 80℃ 退火的最高线性迁移率是多少？",
     "Table 4 中 meta-IDT(QNCN)2 在 80℃ 退火的电子线性迁移率是多少？",
     "Table 4 中 meta-IDT(QNCN)2 在 80℃ 退火 2 小时的线性迁移率是多少？",
+    "Table 4 中 meta-IDT(QNCN)2 在 80℃ 退火的非饱和区迁移率是多少？",
+    "What is the non-saturated mobility of meta-IDT(QNCN)2 annealed at 80 °C in Table 4?",
+    "Table 4 中 meta-IDT(QNCN)2 不在 80℃ 退火的饱和迁移率是多少？",
+    "What is the saturated mobility of meta-IDT(QNCN)2 not annealed at 80 °C in Table 4?",
 ])
 def test_lookup_requires_explicit_matching_qualifiers(question):
     assert lookup_pdf_table(qualified_table(), question, max_pages=1) is None
@@ -288,6 +295,93 @@ def test_recovers_split_digits_and_does_not_infer_maximum():
     result = lookup_pdf_table(data, "P1 在 Table 2 的线性和饱和迁移率是多少", max_pages=1)
     assert result is not None and "| P1 | 0.11 | 0.25 |" in result.answer
     assert lookup_pdf_table(data, "P1 在 Table 2 的最高线性迁移率是多少", max_pages=1) is None
+
+
+def solvent_free_table():
+    """A three-page paper whose only table has no solvent column."""
+    stream = BytesIO()
+    pdf = canvas.Canvas(stream, pagesize=(600, 800))
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(50, 740, "Supporting discussion without tables.")
+    pdf.showPage()
+    pdf.drawString(50, 740, "Further discussion of film processing.")
+    pdf.showPage()
+    pdf.drawString(50, 747, "Table 1. Device performance.")
+    for y in (732, 704, 590):
+        pdf.line(50, y, 520, y)
+    for x, label in zip(
+        (54, 145, 310, 445),
+        ("Films", "Substrate temperature (°C)", "Mobility (cm2/(Vs))", "VT(V)"),
+        strict=True,
+    ):
+        pdf.drawString(x, 715, label)
+    for index, row in enumerate((("PY3-OTS", "25", "2.8 × 10", "-20"),
+                                 ("PY3-OTS", "60", "2.3 × 10", "-8"),
+                                 ("PY3-OTS", "100", "0.02", "-2"))):
+        y = 690 - 18 * index
+        for x, item in zip((54, 145, 310, 445), row, strict=True):
+            pdf.drawString(x, y, item)
+        pdf.setFont("Helvetica", 7)
+        x = 310 + pdf.stringWidth(row[2], "Helvetica", 10)
+        pdf.drawString(x, y + 4, "-3")
+        pdf.setFont("Helvetica", 10)
+    pdf.save()
+    return stream.getvalue()
+
+
+@pytest.mark.parametrize(("preposition", "medium"), [
+    ("in", "DMF"), ("in", "acetonitrile"), ("under", "nitrogen"), ("in", "o-xylene"),
+])
+def test_unverifiable_explicit_condition_declines(preposition, medium):
+    question = (
+        f"What is the mobility of PY3-OTS at 60 °C {preposition} {medium} "
+        "in Table 1 of 薄膜文献1.pdf?"
+    )
+    assert table_lookup_requested(question) is False
+    assert lookup_pdf_table(solvent_free_table(), question, max_pages=3) is None
+
+
+@pytest.mark.parametrize("question", [
+    "表1里 PY3-OTS 在乙腈中 60℃ 的迁移率是多少？",
+    "表1里 PY3-OTS 于乙腈中 60℃ 的迁移率是多少？",
+    "表1里 PY3-OTS 在 DMF 中 60℃ 的迁移率是多少？",
+    "表1里 PY3-OTS 在未知介质X中 60℃ 的迁移率是多少？",
+    "表1里 PY3-OTS 在含有 DMF 的溶液中 60℃ 的迁移率是多少？",
+    "What is the mobility of PY3-OTS at 60 °C in a solution of DMF in Table 1?",
+    "What is the mobility of PY3-OTS at 60 °C using a solution containing DMF in Table 1?",
+    "What is the mobility of PY3-OTS at 60 °C in a solution consisting of DMF in Table 1?",
+])
+def test_unverified_condition_in_compound_medium_expression_declines(question):
+    assert lookup_pdf_table(solvent_free_table(), question, max_pages=3) is None
+
+
+@pytest.mark.parametrize("question", [
+    "What is the mobility of PY3-OTS at 60 °C in Table 1 of 薄膜文献1.pdf?",
+    "表1里 PY3-OTS 在这张表中记录的 60℃ 迁移率是多少？",
+    "在原文中 Table 1 里 PY3-OTS 在 60℃ 下的迁移率是多少？",
+])
+def test_solvent_free_question_still_reads_page_three(question):
+    result = lookup_pdf_table(
+        solvent_free_table(),
+        question,
+        max_pages=3,
+    )
+    assert result is not None
+    assert (result.page, result.table_label) == (3, "Table 1")
+    assert "2.3 × 10⁻³" in result.answer
+
+
+@pytest.mark.parametrize("media", ["CB and DMF", "CB, DCB, and DMF", "CB, DMF"])
+def test_known_solvent_does_not_hide_unverified_coordinated_medium(media):
+    data = condition_table(
+        ("Polymers (solvents)", "Maximum hole mobility (cm2/Vs)", "VT(V)"),
+        (("P1 (CB)", "0.086", "-31"), ("P1 (DCB)", "0.074", "-30")),
+    )
+    control = lookup_pdf_table(data, "Table 2: highest mobility of P1 in CB", max_pages=1)
+    assert control is not None and "0.086" in control.answer
+    assert lookup_pdf_table(
+        data, f"Table 2: highest mobility of P1 in a solution of {media}", max_pages=1,
+    ) is None
 
 
 def condition_table(headers, rows, *, caption="Table 2. Device data.", repeat=False):
@@ -390,6 +484,9 @@ def test_unproven_electrode_conditions_decline(labels):
     ("P1 (CB) 和 P2 (DCB)", ["P1 (CB)", "P2 (DCB)"]),
     ("P1/CB 和 P2/DCB", ["P1 (CB)", "P2 (DCB)"]),
     ("P1 在 CB 和 DCB", ["P1 (CB)", "P1 (DCB)"]),
+    ("P1 在 CB 中", ["P1 (CB)"]),
+    ("P1 在 CB 溶液中", ["P1 (CB)"]),
+    ("P1 in a solution of DCB", ["P1 (DCB)"]),
 ])
 def test_multi_solvent_conditions_keep_explicit_sample_pairs(labels, expected):
     data = condition_table(
@@ -408,6 +505,21 @@ def test_multi_solvent_conditions_keep_explicit_sample_pairs(labels, expected):
     assert lookup_pdf_table(
         data, "列出 Table 2 中 P1 (CB) 和 P2 的最高迁移率", max_pages=1,
     ) is None
+
+
+@pytest.mark.parametrize("condition", [
+    "P1 不使用 CB 的",
+    "P1 不是 CB 制膜的",
+    "P1 非 CB 的",
+    "P1 without CB",
+    "P1 not in CB",
+])
+def test_negated_solvent_does_not_select_the_excluded_row(condition):
+    data = condition_table(
+        ("Polymers (solvents)", "Hole mobility (cm2/Vs)", "VT(V)"),
+        (("P1 (CB)", "0.086", "-31"), ("P1 (DCB)", "0.074", "-30")),
+    )
+    assert lookup_pdf_table(data, f"Table 2: {condition} mobility", max_pages=1) is None
 
 
 def test_repeated_rules_share_only_one_caption_but_separate_tables_stay_distinct():

@@ -94,10 +94,97 @@ _RELATIVE = re.compile(
     re.I,
 )
 _EXCLUDED = (
-    r"(?:\b(?:without|no|not(?:\s+using)?)\s+|没有\s*|未使用\s*|不使用\s*|不含\s*|无\s*)"
+    r"(?:\b(?:without|no|not(?:\s+(?:using|with|in|at|on|from|annealed(?:\s+at)?|"
+    r"measured(?:\s+at)?))?)\s+|"
+    r"(?:(?<!有)没有|没[有在]?|未(?:使用|采用|用|在)?|不(?:使用|采用|用|在|是)|并非|不含|无|"
+    r"(?<![除毫绝并])非(?!常))\s*(?:使用|采用|用|在|退火|测量)?\s*)"
     r"(?:(?:an?|the)\s+)?"
 )
-_NEGATED_ELECTRODE = re.compile(rf"{_EXCLUDED}(?:{_ELECTRODE.pattern})", re.I)
+_NEGATED_ROW_CONDITION = re.compile(
+    rf"(?:{_EXCLUDED}|\bnon[- ]+)(?:{_ELECTRODE.pattern}|{_SOLVENT.pattern}|{_ARCHITECTURE.pattern}"
+    rf"|{_NUMBER}\s*{_CELSIUS})",
+    re.I,
+)
+_NEGATED_QUALIFIER = re.compile(
+    r"(?:非|不(?:是|在|处于)?|未|无)\s*(?:饱和|线性|电子|空穴|平均|最高|最大|峰值)"
+    r"|\b(?:(?:non|un)[ -]*|not\s+(?:(?:in|at|the)\s+)*|(?:without|no)\s+)"
+    r"(?:saturat(?:ed|ion)|linear|electrons?|holes?|average|mean|max(?:imum)?|highest|peak)\b",
+    re.I,
+)
+# A table row is verifiable only through an explicit header, label or condition. Any other
+# explicit medium (a solvent or atmosphere the table never lists) makes a numeric answer unsafe.
+_SOLVENT_PHRASE = re.compile(
+    r"溶剂|溶解于|溶于|(?:用|以)[^\n，,。；;？！?]{1,32}(?:制膜|成膜|溶液)",
+    re.I,
+)
+_MEDIUM_JOIN = r"(?:\s*,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+_CONDITION_PREPOSITION = re.compile(
+    r"\b(?:in|with|using|from|via|under|after|before)\s+(?:an?\s+|the\s+)?"
+    r"(?:(?:solutions?|mixtures?|dispersions?|phases?|atmospheres?|environments?)\s+"
+    r"(?:(?:of|with|containing|(?:made|prepared)\s+(?:from|with)|based\s+on"
+    r"|(?:consisting|composed)(?:\s+solely)?\s+of)\s+(?:an?\s+|the\s+)?)?)?"
+    # Keep looking through coordinated solvents if only the first members are recognized.
+    rf"(?:\x01+(?:{_MEDIUM_JOIN}\x01+)*{_MEDIUM_JOIN})?"
+    r"(?P<term>[A-Za-z][A-Za-z0-9]*(?:[-/][A-Za-z0-9]+)*)",
+    re.I,
+)
+_CHINESE_CONDITION = re.compile(
+    r"(?:在|(?<![基关源])于)(?P<term>[^在,，;；。?？!！\n:：]+?)[中下里]"
+)
+_CHINESE_REFERENCE = re.compile(
+    r"(?:(?:不同|所有|全部|各[个种]?|相同|[这那][些个张篇份]|该|此|本|原)?"
+    r"(?:实验|测试|测量|退火|衬底|沉积)?"
+    r"(?:温度|条件|样品|材料|器件|表格|表|论文|文献|文章|文件|文)?)"
+)
+# Grammar words and table-scope words, not chemistry names: the check must stay open-ended.
+_VERIFIABLE_CONDITION_WORDS = frozenset({
+    "a", "an", "the", "this", "that", "these", "those", "which", "what", "same", "other",
+    "table", "tables", "fig", "figs", "figure", "figures", "section", "page", "pages",
+    "paper", "papers", "document", "documents", "file", "files", "pdf", "text", "question",
+    "above", "below", "general", "particular", "total", "detail", "details", "summary",
+    "terms", "order", "addition", "contrast", "fact", "brief", "all", "each", "every",
+    "regime", "region", "mode", "state", "form", "case", "conditions", "condition",
+    "annealing", "annealed", "measurement", "measured", "measurements", "test", "tested",
+    "solution", "solutions", "phase", "film", "films", "device", "devices", "sample", "samples",
+    "as", "cast", "series",
+    # A masked verified label leaves the sentence's own preposition behind.
+    "in", "into", "with", "without", "using", "from", "via", "under", "over", "after", "before",
+    "at", "on", "to", "by", "of", "for", "and", "or", "than",
+    "please", "give", "show", "list", "report", "extract", "compare",
+})
+
+
+def _mask_spans(pattern: re.Pattern[str], text: str, *, placeholder: str = "\0") -> str:
+    # Keep original offsets so adjacent masked spans cannot form a new phrase.
+    return pattern.sub(lambda match: placeholder * len(match[0]), text)
+
+
+def _unverified_condition(text: str) -> bool:
+    if _SOLVENT_PHRASE.search(text):
+        return True
+    # Mask in the raw text so removed labels cannot join into a new phrase.
+    masked = _mask_spans(_TABLE, _mask_spans(_FILE_OR_DOI, text))
+    masked = _mask_spans(_AS_CAST, _ELECTRODE_LABEL.sub(" ", masked))
+    masked = _mask_spans(_DURATION, _mask_spans(_TEMP_LIST, masked))
+    masked = _mask_spans(_ARCHITECTURE, _mask_spans(_SOLVENT, masked, placeholder="\x01"))
+    for choices in (_REGIMES, _CARRIERS, _STATISTICS):
+        for pattern, _ in choices.values():
+            masked = _mask_spans(re.compile(pattern, re.I), masked)
+    for pattern in _METRICS.values():
+        masked = _mask_spans(pattern, masked)
+    for match in _CHINESE_CONDITION.finditer(masked):
+        # Table names, temperatures and exact solvent labels have already been masked.
+        term = re.sub(r"[\x00\x01\s]", "", match["term"])
+        if term == "溶液" and "\x01" in match["term"]:
+            continue
+        if not _CHINESE_REFERENCE.fullmatch(term):
+            return True
+    for match in _CONDITION_PREPOSITION.finditer(masked):
+        if match["term"].casefold() not in _VERIFIABLE_CONDITION_WORDS:
+            return True
+    return False
+
+
 _UNSUPPORTED_REQUEST = re.compile(
     r"开启电压|开启电流|亚阈值(?:摆幅|斜率)|接触电阻|漏极(?:电压|电流)|栅极(?:电压|电流)"
     r"|偏置|室温|常温|沟道(?:长度|宽度)|可靠性因子|功率转换效率|填充因子|华氏|开尔文|角度|夹角|度角"
@@ -172,6 +259,13 @@ def _normalize(text):
     return unicodedata.normalize("NFKC", text).translate(_MINUSES)
 
 
+def table_labels(question: str) -> tuple[str, ...]:
+    """Return explicit labels using the same syntax as the PDF table reader."""
+    return tuple(dict.fromkeys(f"Table {(a or b).upper()}" for a, b in _TABLE.findall(
+        _normalize(question)
+    )))
+
+
 def table_sample(question: str) -> str | None:
     """Return an explicit identifier hint for indexed-file selection."""
     candidates = table_samples(question)
@@ -218,9 +312,10 @@ def _sample_data_requested(question, samples):
 
 def _unsupported_request(question):
     text = _TABLE.sub(" ", _FILE_OR_DOI.sub(" ", question))
-    if _RELATIVE.search(text) or _NEGATED_ELECTRODE.search(text) or _UNSUPPORTED_REQUEST.search(
-        text
-    ) or re.search(
+    if any(pattern.search(text) for pattern in (
+        _RELATIVE, _NEGATED_ROW_CONDITION, _NEGATED_QUALIFIER,
+        _UNSUPPORTED_REQUEST,
+    )) or _unverified_condition(question) or re.search(
         rf"{_NUMBER}\s*(?:{_CELSIUS}\s*)?(?:-|至|到|\bto\b)\s*{_NUMBER}\s*{_CELSIUS}"
         rf"|\b(?:under|over|about)\s*{_NUMBER}\s*{_CELSIUS}",
         text, re.I,
@@ -237,18 +332,14 @@ def _unsupported_request(question):
     return bool(re.search(r"\d", text))
 
 
-def table_lookup_requested(question: str) -> bool:
-    normalized = _normalize(question)
+def _table_lookup_intended(normalized, samples):
     if re.search(
-        r"最低|最小|为什么|为何|原因|解释|机理|机制|预测|趋势|如何(?:变化|改变|影响)|"
+        r"最低|最小|为什么|为何|原因|解释|机理|机制|预测|趋势|怎么查|如何查(?:看|找)|"
+        r"如何(?:变化|改变|影响)|"
         r"\b(?:minimum|lowest|why|explain|mechanism|predict|trend"
         r"|how (?:do|does|did|can|is|are))\b",
         normalized, re.I,
-    ) or _unsupported_request(normalized):
-        return False
-    samples = table_samples(normalized)
-    if any(re.search(rf"{_EXCLUDED}{_sample_pattern(sample)}", normalized, re.I)
-           for sample in samples):
+    ):
         return False
     if not _requested_metrics(normalized):
         return _sample_data_requested(normalized, samples)
@@ -259,6 +350,22 @@ def table_lookup_requested(question: str) -> bool:
     return bool(
         samples or numeric_intent or _TEMP_LIST.search(normalized) or _TABLE.search(normalized)
         or _ELECTRODE_LABEL.search(normalized),
+    )
+
+
+def table_lookup_intended(question: str) -> bool:
+    """Detect a lookup even when a condition makes a direct answer unsafe."""
+    normalized = _normalize(question)
+    return _table_lookup_intended(normalized, table_samples(normalized))
+
+
+def table_lookup_requested(question: str) -> bool:
+    normalized = _normalize(question)
+    if _unsupported_request(normalized):
+        return False
+    samples = table_samples(normalized)
+    return _table_lookup_intended(normalized, samples) and not any(
+        re.search(rf"{_EXCLUDED}{_sample_pattern(sample)}", normalized, re.I) for sample in samples
     )
 
 
@@ -1323,10 +1430,10 @@ def inspect_pdf_table(
         return None
     query = _normalize(question)
     temps = table_temperatures(query)
-    tables = {f"Table {(a or b).upper()}" for a, b in _TABLE.findall(query)}
+    tables = table_labels(query)
     if len(tables) > 1:
         return None
-    table = next(iter(tables), None)
+    table = tables[0] if tables else None
     implicit_electrodes = not table and _electrode_pairs(query)
     try:
         with _PDFIUM_LOCK, pdfium.PdfDocument(data) as pdf:

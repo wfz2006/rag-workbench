@@ -9,12 +9,13 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
-import uuid
 from pathlib import Path
 
 from filelock import FileLock, Timeout
@@ -27,7 +28,7 @@ class DesktopError(RuntimeError):
 
 
 def prepare_profile(bundle: Path, profile: Path) -> None:
-    """Seed public defaults once; never replace user configuration or existing data."""
+    """Seed missing public defaults; never replace user configuration or existing data."""
     profile.mkdir(parents=True, exist_ok=True)
     env_file = profile / ".env"
     if not env_file.exists():
@@ -41,23 +42,63 @@ def prepare_profile(bundle: Path, profile: Path) -> None:
         config.parent.mkdir(exist_ok=True)
         shutil.copyfile(bundle / "resources" / "config.toml", config)
     model = "models--BAAI--bge-small-zh-v1.5"
-    seed, destination = bundle / "models" / model, profile / "models" / model
-    if seed.is_dir() and not destination.exists():
-        # Complete the copy off to the side; a failed copy must not look like a valid cache.
-        staging = profile / "models" / f"{model}.{uuid.uuid4().hex}.copying"
-        try:
-            shutil.copytree(seed, staging)
-            staging.rename(destination)
-        finally:
-            if (
-                staging.exists()
-                and not staging.is_symlink()
-                and not staging.is_junction()
-                and staging.resolve().parent == (profile / "models").resolve()
-            ):
-                shutil.rmtree(
-                    staging.resolve()
-                )  # Only the random directory created by this attempt.
+    source_models, profile_models = bundle / "models", profile / "models"
+    seed = source_models / model
+    if (
+        stat.S_ISDIR(_seed_entry_mode(source_models) or 0)
+        and stat.S_ISDIR(_seed_entry_mode(seed) or 0)
+        and stat.S_ISDIR(_seed_entry_mode(profile) or 0)
+        and _ensure_seed_directory(profile_models)
+    ):
+        _seed_missing_model_files(seed, profile_models / model)
+
+
+def _seed_entry_mode(path: Path) -> int | None:
+    try:
+        entry = path.lstat()
+    except FileNotFoundError:
+        return None
+    if getattr(entry, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        return 0  # An occupied name, but never a regular file or directory to traverse.
+    return entry.st_mode
+
+
+def _ensure_seed_directory(path: Path) -> bool:
+    with contextlib.suppress(FileExistsError):
+        path.mkdir()
+    return stat.S_ISDIR(_seed_entry_mode(path) or 0)
+
+
+def _seed_missing_model_files(seed: Path, destination: Path) -> None:
+    if not _ensure_seed_directory(destination):
+        return
+    for source in seed.iterdir():
+        target = destination / source.name
+        mode = _seed_entry_mode(source) or 0
+        if stat.S_ISDIR(mode):
+            _seed_missing_model_files(source, target)
+        elif stat.S_ISREG(mode) and _seed_entry_mode(target) is None:
+            _publish_seed_file(source, target)
+
+
+def _publish_seed_file(source: Path, target: Path) -> None:
+    # Stage on the same volume. A stopped or failed copy never bears the cache filename.
+    staging = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=target.parent, prefix=".model-seed-", suffix=".copying", delete=False
+        ) as temporary:
+            staging = Path(temporary.name)
+            with source.open("rb") as file:
+                shutil.copyfileobj(file, temporary)
+        with contextlib.suppress(FileExistsError):
+            if os.name == "nt":
+                staging.rename(target)  # Windows rename refuses to replace an existing name.
+            else:
+                os.link(staging, target)  # POSIX rename would replace an existing file.
+    finally:
+        if staging is not None:
+            staging.unlink(missing_ok=True)
 
 
 def server_environment() -> dict[str, str]:

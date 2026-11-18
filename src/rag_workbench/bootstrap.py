@@ -6,15 +6,31 @@ from pydantic import ValidationError
 
 from rag_workbench.application.generation import GenerationJob
 from rag_workbench.application.knowledge import KnowledgeService
+from rag_workbench.application.pdf_table_lookup import table_labels
 from rag_workbench.application.pipeline import RagPipeline, bounded_history
 from rag_workbench.application.teaching import load_domain_profile, load_teaching_profile
 from rag_workbench.config import EDITABLE_SETTINGS, Settings
 from rag_workbench.domain.errors import AppError
-from rag_workbench.domain.models import AnswerResult, ChatMessage
+from rag_workbench.domain.models import AnswerResult, ChatMessage, TableReference
 from rag_workbench.domain.ports import ChatProvider, Embedder
 from rag_workbench.infrastructure.embedding import BgeEmbedder
 from rag_workbench.infrastructure.llm import OpenAIChatProvider
 from rag_workbench.infrastructure.repository import Repository
+
+
+def _table_reference(result: AnswerResult) -> TableReference | None:
+    if result.mode != "knowledge_base" or len(result.sources) != 1:
+        return None
+    source = result.sources[0]
+    if source.retrieval_method != "pdf_table" or source.chunk.page is None:
+        return None
+    # The table reader puts its exact caption on the first line of the saved source.
+    labels = table_labels(source.chunk.text.partition("\n")[0])
+    if labels:
+        return TableReference(
+            document_id=source.chunk.document_id, label=labels[0], page=source.chunk.page,
+        )
+    return None
 
 
 @dataclass
@@ -49,7 +65,10 @@ class Services:
                 continue
             history.extend(
                 [
-                    ChatMessage(role="user", content=user["content"]),
+                    ChatMessage(
+                        role="user", content=user["content"],
+                        table_reference=_table_reference(result),
+                    ),
                     ChatMessage(role="assistant", content=content),
                 ]
             )

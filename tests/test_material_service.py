@@ -5,6 +5,7 @@ import zipfile
 
 import pytest
 
+from rag_workbench.application.material_analysis import load_observations
 from rag_workbench.application.materials import MaterialsService
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
@@ -421,3 +422,161 @@ def test_numeric_evidence_keeps_adjacent_signed_table_cells_separate(tmp_path):
         evidence=[EvidenceReference(field="value_raw", block_id=block.id, quote=source)],
     )
     assert svc.add_record(row).value_normalized == 4.0
+
+
+@pytest.mark.parametrize(("reported", "fragment", "kind"), [
+    (">= 2.0", "2.0", "bound"),
+    ("≤ 2.0", "2.0", "bound"),
+    ("2.0 ± 0.4", "2.0", "uncertainty"),
+    ("2.0 ± 0.4", "0.4", "uncertainty"),
+    ("2.0 ± 0.4", "± 0.4", "uncertainty"),
+    ("(2.0 ± 0.4) × 10⁻³", "2.0 ± 0.4", "uncertainty"),
+    ("[2.0, 2.8]", "2.0", "range"),
+    ("[2.0, 2.8]", "2.8", "range"),
+    ("−24–−20", "−20", "range"),
+    ("2.0 to 2.8", "2.0", "range"),
+    ("2.0 - 2.8", "2.0", "range"),
+    ("2.0 - 2.8", "2.8", "range"),
+    ("≈ 2.0", "2.0", None),
+    ("approximately 2.0", "2.0", None),
+    ("约2.0", "2.0", None),
+    ("约为2.0", "2.0", None),
+    ("≈ (2.0 ± 0.4) × 10⁻³", "(2.0 ± 0.4) × 10⁻³", None),
+])
+def test_numeric_evidence_preserves_the_complete_reported_quantity(
+    tmp_path, reported, fragment, kind,
+):
+    svc = service(tmp_path)
+    doc = svc.ingest("paper.txt", f"Alpha threshold voltage {reported} V.".encode())
+    block, = svc.repo.blocks(doc.id)
+    values = dict(material_name="Alpha", property_name="threshold voltage",
+                  value_raw=reported, unit_raw="V")
+    row = MaterialRecord(
+        id="record", document_id=doc.id, **values,
+        evidence=[
+            EvidenceReference(field=k, block_id=block.id, quote=v) for k, v in values.items()
+        ],
+    )
+    cropped = row.model_copy(update={
+        "value_raw": fragment,
+        "evidence": [
+            ref.model_copy(update={"quote": fragment}) if ref.field == "value_raw" else ref
+            for ref in row.evidence
+        ],
+    })
+    with pytest.raises(AppError, match="value_raw"):
+        svc.add_record(cropped)
+    candidate = svc.add_record(row)
+    for status in ("candidate", "approved"):
+        with pytest.raises(AppError, match="value_raw"):
+            svc.review(row.id, cropped, status=status)
+    assert svc.repo.record(row.id) == candidate
+    approved = svc.review(row.id, candidate, status="approved")
+    assert approved.revision == 2
+    exported, = csv.DictReader(io.StringIO(svc.export_csv().decode("utf-8-sig")))
+    assert exported["value_raw"] == reported and exported["value_normalized"] == ""
+    quantity = load_observations(svc.repo)[0].value
+    assert (quantity.kind if quantity else None) == kind
+
+
+@pytest.mark.parametrize(("reported", "fragment"), [
+    ("at least 2.0", "2.0"),
+    ("no more than 2.0", "2.0"),
+    ("不低于2.0", "2.0"),
+    ("no more than 2.0", "more than 2.0"),
+    ("no less than 2.0", "less than 2.0"),
+    ("no less than 2.0", "than 2.0"),
+    ("no higher than 2.0", "higher than 2.0"),
+    ("no more than approximately 2.0", "approximately 2.0"),
+    ("not exceeding 2.0", "exceeding 2.0"),
+    ("not to exceed 2.0", "exceed 2.0"),
+    ("does not exceed 2.0", "exceed 2.0"),
+    ("不高于2.0", "高于2.0"),
+    ("不超过2.0", "超过2.0"),
+    ("不高于约2.0", "约2.0"),
+    ("不得超过2.0", "超过2.0"),
+    ("不低于2.0", "低于2.0"),
+])
+def test_textual_bound_must_keep_its_complete_qualifier(tmp_path, reported, fragment):
+    svc = service(tmp_path)
+    source = f"Alpha threshold voltage {reported} V."
+    doc = svc.ingest("paper.txt", source.encode())
+    block, = svc.repo.blocks(doc.id)
+    values = dict(
+        material_name="Alpha", property_name="threshold voltage",
+        value_raw=reported, unit_raw="V",
+    )
+    full = MaterialRecord(
+        id="record", document_id=doc.id, **values,
+        evidence=[
+            EvidenceReference(field=k, block_id=block.id, quote=v) for k, v in values.items()
+        ],
+    )
+    cropped = full.model_copy(update={
+        "value_raw": fragment,
+        "evidence": [
+            ref.model_copy(update={"quote": fragment}) if ref.field == "value_raw" else ref
+            for ref in full.evidence
+        ],
+    })
+    with pytest.raises(AppError, match="value_raw"):
+        svc.add_record(cropped)
+    saved = svc.add_record(full)
+    for status in ("candidate", "approved"):
+        with pytest.raises(AppError, match="value_raw"):
+            svc.review(full.id, cropped, status=status)
+    assert svc.repo.record(full.id) == saved
+    approved = svc.review(full.id, saved, status="approved")
+    assert approved.value_normalized is None
+    exported, = csv.DictReader(io.StringIO(svc.export_csv().decode("utf-8-sig")))
+    assert exported["value_raw"] == reported and exported["value_normalized"] == ""
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("2.0", 2.0), ("-2.8", -2.8)])
+def test_numeric_evidence_keeps_space_separated_negative_cell(raw, expected, tmp_path):
+    svc = service(tmp_path)
+    doc = svc.ingest("paper.txt", b"Alpha threshold voltage 2.0 -2.8 V.")
+    block, = svc.repo.blocks(doc.id)
+    values = dict(material_name="Alpha", property_name="threshold voltage", value_raw=raw,
+                  unit_raw="V")
+    candidate = svc.add_record(MaterialRecord(
+        id="record", document_id=doc.id, **values,
+        evidence=[
+            EvidenceReference(field=k, block_id=block.id, quote=v) for k, v in values.items()
+        ],
+    ))
+    assert svc.review(candidate.id, candidate, status="approved").value_normalized == expected
+
+
+@pytest.mark.parametrize("unit", [
+    "× 10⁻⁴ cm2/Vs", "10^-4 cm2/Vs", "(cm2/Vs) × 10⁻⁴",
+])
+def test_unit_evidence_cannot_drop_the_reported_scale(tmp_path, unit):
+    svc = service(tmp_path)
+    doc = svc.ingest("paper.txt", f"Alpha mobility: 20.\nMobility unit: {unit}.".encode())
+    block, = svc.repo.blocks(doc.id)
+    values = dict(material_name="Alpha", property_name="mobility", value_raw="20", unit_raw=unit)
+    row = MaterialRecord(
+        id="record", document_id=doc.id, **values,
+        evidence=[
+            EvidenceReference(field=k, block_id=block.id, quote=v) for k, v in values.items()
+        ],
+    )
+    cropped = row.model_copy(update={
+        "unit_raw": "cm2/Vs",
+        "evidence": [
+            ref.model_copy(update={"quote": "cm2/Vs"}) if ref.field == "unit_raw" else ref
+            for ref in row.evidence
+        ],
+    })
+    with pytest.raises(AppError, match="unit_raw"):
+        svc.add_record(cropped)
+    saved = svc.add_record(row)
+    with pytest.raises(AppError, match="unit_raw"):
+        svc.review(row.id, cropped, status="approved")
+    approved = svc.review(row.id, saved, status="approved")
+    assert approved.value_normalized == pytest.approx(0.002)
+    exported, = csv.DictReader(io.StringIO(svc.export_csv().decode("utf-8-sig")))
+    assert exported["unit_raw"] == unit and float(exported["value_normalized"]) == 0.002
+    observation, = load_observations(svc.repo)
+    assert observation.value is not None and observation.value.value == pytest.approx(0.002)

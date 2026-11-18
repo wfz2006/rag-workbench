@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -61,6 +62,99 @@ def test_profile_model_seed_is_copied_once(tmp_path):
     (profile / "models" / model / "public-model").write_text("user-model")
     prepare_profile(bundle, profile)
     assert (profile / "models" / model / "public-model").read_text() == "user-model"
+
+
+def _seed_snapshot(tmp_path):
+    bundle = tmp_path / "bundle"
+    (bundle / "resources").mkdir(parents=True)
+    (bundle / "resources/config.toml").write_text("")
+    snapshot = Path("models/models--BAAI--bge-small-zh-v1.5/snapshots/shipped")
+    source = bundle / snapshot
+    source.mkdir(parents=True)
+    (source / "config.json").write_bytes(b"bundled config")
+    (source / "model.safetensors").write_bytes(b"complete public weights")
+    profile = tmp_path / "user-data"
+    (profile / ".streamlit").mkdir(parents=True)
+    (profile / ".streamlit/config.toml").write_text("# existing configuration")
+    return bundle, profile, profile / snapshot
+
+
+def test_profile_completes_partial_bge_snapshot_without_replacing_files(tmp_path):
+    bundle, profile, snapshot = _seed_snapshot(tmp_path)
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_bytes(b"existing config")
+    other = bundle / "models/models--other"
+    other.mkdir()
+    (other / "config.json").write_bytes(b"other model")
+    (profile / "knowledge").mkdir()
+    (profile / "knowledge/source.txt").write_bytes(b"existing source")
+
+    prepare_profile(bundle, profile)
+
+    assert (snapshot / "config.json").read_bytes() == b"existing config"
+    assert (snapshot / "model.safetensors").read_bytes() == b"complete public weights"
+    assert (profile / "knowledge/source.txt").read_bytes() == b"existing source"
+    assert not (profile / "models/models--other").exists()
+
+
+def test_interrupted_bge_seed_is_invisible_and_can_retry(tmp_path, monkeypatch):
+    bundle, profile, snapshot = _seed_snapshot(tmp_path)
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_bytes(b"existing config")
+    destination = snapshot / "model.safetensors"
+
+    def interrupted_copy(source, staged, *args, **kwargs):
+        staged.write(source.read(4))
+        assert not destination.exists()
+        raise OSError("interrupted seed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(shutil, "copyfileobj", interrupted_copy)
+        with pytest.raises(OSError, match="interrupted seed"):
+            prepare_profile(bundle, profile)
+
+    assert not destination.exists()
+    assert set(snapshot.iterdir()) == {snapshot / "config.json"}
+    prepare_profile(bundle, profile)
+    assert destination.read_bytes() == b"complete public weights"
+
+
+def test_bge_seed_never_replaces_file_added_during_copy(tmp_path, monkeypatch):
+    bundle, profile, snapshot = _seed_snapshot(tmp_path)
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_bytes(b"existing config")
+    destination = snapshot / "model.safetensors"
+    copyfileobj = shutil.copyfileobj
+
+    def copy_with_concurrent_file(source, staged, *args, **kwargs):
+        copyfileobj(source, staged, *args, **kwargs)
+        with destination.open("xb") as file:
+            file.write(b"concurrent weights")
+
+    monkeypatch.setattr(shutil, "copyfileobj", copy_with_concurrent_file)
+    prepare_profile(bundle, profile)
+    assert destination.read_bytes() == b"concurrent weights"
+    assert set(snapshot.iterdir()) == {snapshot / "config.json", destination}
+
+
+@pytest.mark.parametrize("linked_dir", ["models", "snapshot"])
+def test_bge_seed_does_not_copy_through_directory_links(tmp_path, linked_dir):
+    bundle, profile, snapshot = _seed_snapshot(tmp_path)
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "keep").write_bytes(b"must be untouched")
+    link = profile / "models" if linked_dir == "models" else snapshot
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        # A junction works without Developer Mode or elevation on Windows.
+        subprocess.run(["cmd", "/d", "/c", "mklink", "/J", str(link), str(external)], check=True)
+    else:
+        link.symlink_to(external, target_is_directory=True)
+
+    prepare_profile(bundle, profile)
+
+    assert list(external.iterdir()) == [external / "keep"]
+    assert (external / "keep").read_bytes() == b"must be untouched"
 
 
 def test_desktop_ignores_shell_credentials_and_project_profile(monkeypatch):
