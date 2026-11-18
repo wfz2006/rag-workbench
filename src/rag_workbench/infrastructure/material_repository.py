@@ -10,9 +10,10 @@ import os
 import sqlite3
 import tempfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from functools import wraps
 from pathlib import Path
+from typing import NamedTuple
 
 from filelock import FileLock, Timeout
 from pydantic import ValidationError
@@ -45,6 +46,22 @@ def _safe_io(method):
                 "invalid_material_data", "材料记录格式无效或数据已损坏，请检查后重试。"
             ) from exc
     return wrapped
+
+
+class MaterialNameEvidence(NamedTuple):
+    document_id: str
+    material_name: str
+    quote: str
+    block: EvidenceBlock
+
+
+class ApprovedConceptEvidence(NamedTuple):
+    record_id: str
+    document_id: str
+    field: str
+    value: str
+    quote: str
+    block: EvidenceBlock
 
 
 class MaterialsRepository:
@@ -309,6 +326,69 @@ class MaterialsRepository:
         with self.connect() as db:
             rows = db.execute(query + " ORDER BY created_at, id", params).fetchall()
         return [MaterialRecord.model_validate_json(row[0]) for row in rows]
+
+    @classmethod
+    def approved_material_name_evidence(
+        cls, root: Path, document_ids: set[str],
+    ) -> tuple[MaterialNameEvidence, ...]:
+        return tuple(
+            MaterialNameEvidence(row.document_id, row.value, row.quote, row.block)
+            for row in cls._approved_field_evidence(root, document_ids, ("material_name",))
+        )
+
+    @classmethod
+    def approved_concept_evidence(
+        cls, root: Path, document_ids: set[str],
+    ) -> tuple[ApprovedConceptEvidence, ...]:
+        return cls._approved_field_evidence(
+            root, document_ids,
+            (
+                "material_name", "property_name", "process", "measurement_method",
+                "deposition_method",
+            ),
+        )
+
+    @classmethod
+    @_safe_io
+    def _approved_field_evidence(
+        cls, root: Path, document_ids: set[str], fields: tuple[str, ...],
+    ) -> tuple[ApprovedConceptEvidence, ...]:
+        """Read approved fields with same-document evidence from an existing workspace."""
+        path = root / "materials.sqlite3"
+        if not document_ids or not path.is_file() or path.resolve() != path:
+            return ()
+        ids = sorted(document_ids)
+        evidence = []
+        field_parameters = ",".join("?" for _ in fields)
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
+            db.execute("BEGIN")
+            if db.execute("PRAGMA user_version").fetchone()[0] > cls.SCHEMA_VERSION:
+                raise AppError(
+                    "materials_schema_version", "材料数据库来自更新版本，请使用匹配软件。"
+                )
+            for offset in range(0, len(ids), 400):
+                batch = ids[offset:offset + 400]
+                parameters = ",".join("?" for _ in batch)
+                for record, identity, field, value, quote, payload in db.execute(f"""
+                    SELECT r.id, r.document_id, json_extract(ref.value, '$.field'),
+                           json_extract(r.payload, '$.' || json_extract(ref.value, '$.field')),
+                           json_extract(ref.value, '$.quote'), b.payload
+                    FROM material_records r JOIN json_each(r.payload, '$.evidence') ref
+                    JOIN evidence_blocks b ON b.id = json_extract(ref.value, '$.block_id')
+                        AND b.document_id = r.document_id
+                    WHERE r.document_id IN ({parameters})
+                        AND json_extract(r.payload, '$.document_id') = r.document_id
+                        AND json_extract(r.payload, '$.status') = 'approved'
+                        AND json_extract(ref.value, '$.field') IN ({field_parameters})
+                    ORDER BY r.document_id, r.id, ref.key
+                """, (*batch, *fields)):
+                    block = EvidenceBlock.model_validate_json(payload)
+                    if (block.document_id == identity and isinstance(value, str) and value.strip()
+                            and isinstance(quote, str) and quote.strip()):
+                        evidence.append(ApprovedConceptEvidence(
+                            record, identity, field, value, quote, block,
+                        ))
+        return tuple(evidence)
 
     @_safe_io
     def revisions(self, record_id: str) -> list[dict]:

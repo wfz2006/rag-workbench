@@ -7,6 +7,7 @@ from rag_workbench.bootstrap import Services, build_services, load_settings, ser
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
 from rag_workbench.ui.chat import chat_page
+from rag_workbench.ui.knowledge_graph import knowledge_graph_page
 from rag_workbench.ui.materials import materials_page
 from rag_workbench.ui.pages import debug_page, knowledge_page, packs_page, settings_page
 from rag_workbench.ui.session_state import collect_finished_jobs, monitor_answer_jobs
@@ -70,6 +71,8 @@ def main() -> None:
             settings_page(services)
         elif page == "材料文献":
             materials_page(services)
+        elif page == "知识星图":
+            knowledge_graph_page(services)
         else:
             debug_page(services)
         install_interactions(session_id, page)

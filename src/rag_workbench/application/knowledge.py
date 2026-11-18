@@ -6,7 +6,7 @@ import uuid
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from filelock import FileLock, Timeout
@@ -63,6 +63,9 @@ from rag_workbench.infrastructure.parsing import (
 )
 from rag_workbench.infrastructure.repository import Repository
 from rag_workbench.infrastructure.vector_store import FaissStore, normalized
+
+if TYPE_CHECKING:
+    from faiss import IndexFlatIP
 
 QUOTE_CONTEXT_LIMIT = 4
 _TABLE_POINTER = re.compile(r"(?:该表|上表)(?![现明示达述情演单征面观皮层])")
@@ -614,6 +617,35 @@ class KnowledgeService:
     def list_documents(self) -> list[Document]:
         with self._locked():
             return self.repo.documents()
+
+    def visible_index_snapshot(self, *, load_vectors: bool = False) -> tuple[
+        tuple[Document, ...], tuple[tuple[int, Chunk], ...], "IndexFlatIP | None"
+    ]:
+        """Read catalog, allowed chunk positions and immutable vectors from one generation."""
+        with self._locked():
+            chunks, active = self._snapshot()
+            if chunks and not active:
+                raise AppError("index_corrupt", "文本块存在但活动索引缺失，请重新索引。")
+            limit = self.settings.spoiler_max_page
+            by_id = {
+                doc.id: doc for doc in self._source_catalog.values()
+                if doc.status == "ready" and (
+                    limit is None or doc.source_page is None or doc.source_page <= limit
+                )
+            }
+            visible = tuple(
+                (position, chunk) for position, chunk in enumerate(chunks)
+                if chunk.document_id in by_id and self._spoiler_allowed(chunk)
+            )
+            included = {chunk.document_id for _, chunk in visible}
+            documents = tuple(sorted(
+                (by_id[identity] for identity in included),
+                key=lambda doc: (doc.name.casefold(), doc.id),
+            ))
+            index = None
+            if load_vectors and visible:
+                index = self.store.load(active, chunks, self.signature)
+            return documents, visible, index
 
     def assign_sources(self, metadata: dict[str, tuple[str, int]]) -> None:
         """Trusted metadata connects split source pages, independently of document instructions."""

@@ -17,7 +17,7 @@ def test_all_pages_render_with_empty_kb_and_no_key(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
-    for page in ("知识库管理", "知识包", "系统设置", "检索调试", "AI 聊天"):
+    for page in ("知识库管理", "知识包", "系统设置", "检索调试", "知识星图", "AI 聊天"):
         app.sidebar.radio[0].set_value(page).run()
         assert not app.exception, page
     app.chat_input[0].set_value("请介绍一下你自己").run()
@@ -159,10 +159,10 @@ def test_pending_turn_can_stop_and_new_session_is_independent(settings, monkeypa
         gate.set()
 
 
-def test_sidebar_css_covers_all_five_navigation_icons():
+def test_sidebar_css_covers_all_navigation_icons():
     from rag_workbench.ui.shell import PAGES
 
-    assert len(PAGES) == 6
+    assert "知识星图" in PAGES
     css = (ROOT / "src" / "rag_workbench" / "ui" / "assets" / "workbench.css").read_text(
         encoding="utf-8"
     )

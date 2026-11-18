@@ -10,7 +10,7 @@ from rag_workbench.application.packs import PackCatalog
 from rag_workbench.bootstrap import Services
 from rag_workbench.ui.session_state import collect_finished_jobs
 
-PAGES = ["AI 聊天", "知识库管理", "知识包", "系统设置", "检索调试", "材料文献"]
+PAGES = ["AI 聊天", "知识库管理", "知识包", "系统设置", "检索调试", "材料文献", "知识星图"]
 PACK_STATE_KEYS = (
     "workspace_page",
     "session_id",
@@ -30,6 +30,9 @@ PACK_STATE_KEYS = (
     "session_limit",
     "pack_build_result",
     "pack_lint_result",
+    "knowledge_graph_scope",
+    "knowledge_graph_center",
+    "knowledge_graph_edge",
 )
 
 

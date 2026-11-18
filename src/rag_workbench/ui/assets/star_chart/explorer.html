@@ -1,0 +1,31 @@
+<div class="wb-star-explorer">
+  <div class="wb-star-controls">
+    <div class="wb-star-search">
+      <label>当前知识点
+        <input type="search" role="combobox" aria-label="当前知识点" aria-autocomplete="list" aria-expanded="false" autocomplete="off" spellcheck="false" />
+      </label>
+      <ul class="wb-star-results" role="listbox" aria-label="匹配的知识点" hidden></ul>
+    </div>
+    <div class="wb-star-actions">
+      <button type="button" data-action="back" disabled>← 上一个</button>
+      <button type="button" data-action="reset">重置视图</button>
+    </div>
+  </div>
+  <div class="wb-star-chart-key" aria-label="图例">
+    <div class="wb-star-node-key"></div>
+    <div class="wb-star-line-key">
+      <span><i></i>同段提及</span>
+      <span><i></i>已审核记录</span>
+    </div>
+    <span class="wb-star-gestures">拖动平移 · 滚轮缩放</span>
+  </div>
+  <div class="wb-star-body">
+    <div class="wb-star-chart" role="group" aria-label="知识点关系图"></div>
+    <section class="wb-star-inspector" aria-label="原文依据">
+      <label class="wb-star-edge-picker">查看连线依据
+        <select aria-label="查看连线依据"></select>
+      </label>
+      <div class="wb-star-evidence"></div>
+    </section>
+  </div>
+</div>

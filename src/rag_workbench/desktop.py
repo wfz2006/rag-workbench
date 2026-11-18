@@ -310,7 +310,10 @@ def run(bundle: Path, profile: Path, *, smoke: bool = False, smoke_external: boo
                     if not result.get("ready"):
                         raise TimeoutError("Desktop UI did not become ready.")
                     result["pages"] = []
-                    pages = ("知识库管理", "知识包", "系统设置", "检索调试", "材料文献", "AI 聊天")
+                    pages = (
+                        "知识库管理", "知识包", "系统设置", "检索调试",
+                        "材料文献", "知识星图", "AI 聊天",
+                    )
                     for page in pages:
                         page_json = json.dumps(page)
                         clicked = window.evaluate_js(
