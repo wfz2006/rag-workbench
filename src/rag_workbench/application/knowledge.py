@@ -707,7 +707,7 @@ class KnowledgeService:
             page = max(pages) if pages else None
         return page is None or page <= limit
 
-    def _verified_original(self, document: Document) -> bytes:
+    def verified_original(self, document: Document) -> bytes:
         path = self._raw_path(document)
         try:
             if path.stat().st_size != document.size:
@@ -805,7 +805,7 @@ class KnowledgeService:
                     table_electrode_conditions(lookup_question),
                 )
                 try:
-                    originals = [(doc, self._verified_original(doc)) for doc in candidates]
+                    originals = [(doc, self.verified_original(doc)) for doc in candidates]
                 except AppError:
                     if not strict_table:
                         return None  # Inferred sources do not make the ordinary RAG path fail.
@@ -813,7 +813,7 @@ class KnowledgeService:
             elif strict_table and not table:
                 originals = []  # A qualified lookup may be blocked before PDF extraction.
             else:
-                originals = [(doc, self._verified_original(doc)) for doc in named]
+                originals = [(doc, self.verified_original(doc)) for doc in named]
 
         if table and len(named) <= 1:
             hits = [

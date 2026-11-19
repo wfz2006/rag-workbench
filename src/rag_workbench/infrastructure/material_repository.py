@@ -62,6 +62,7 @@ class ApprovedConceptEvidence(NamedTuple):
     value: str
     quote: str
     block: EvidenceBlock
+    revision: int
 
 
 class MaterialsRepository:
@@ -369,10 +370,11 @@ class MaterialsRepository:
             for offset in range(0, len(ids), 400):
                 batch = ids[offset:offset + 400]
                 parameters = ",".join("?" for _ in batch)
-                for record, identity, field, value, quote, payload in db.execute(f"""
+                for record, identity, field, value, quote, payload, revision in db.execute(f"""
                     SELECT r.id, r.document_id, json_extract(ref.value, '$.field'),
                            json_extract(r.payload, '$.' || json_extract(ref.value, '$.field')),
-                           json_extract(ref.value, '$.quote'), b.payload
+                           json_extract(ref.value, '$.quote'), b.payload,
+                           json_extract(r.payload, '$.revision')
                     FROM material_records r JOIN json_each(r.payload, '$.evidence') ref
                     JOIN evidence_blocks b ON b.id = json_extract(ref.value, '$.block_id')
                         AND b.document_id = r.document_id
@@ -386,7 +388,7 @@ class MaterialsRepository:
                     if (block.document_id == identity and isinstance(value, str) and value.strip()
                             and isinstance(quote, str) and quote.strip()):
                         evidence.append(ApprovedConceptEvidence(
-                            record, identity, field, value, quote, block,
+                            record, identity, field, value, quote, block, revision or 1,
                         ))
         return tuple(evidence)
 

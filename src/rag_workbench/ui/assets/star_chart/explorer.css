@@ -106,6 +106,7 @@
 }
 .wb-star-evidence article h3 { font-size: 0.8rem; margin: 0 0 0.35rem; overflow-wrap: anywhere; }
 .wb-star-evidence article p { margin: 0; white-space: pre-wrap; }
+.wb-star-evidence article button { margin-block-start: 0.5rem; }
 .wb-star-tooltip { pointer-events: none !important; }
 .wb-star-tooltip-content {
   font: 0.82rem/1.45 "Segoe UI", "Microsoft YaHei", sans-serif;

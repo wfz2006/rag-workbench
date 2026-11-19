@@ -20,6 +20,8 @@ from rag_workbench.application.knowledge_graph import (
 from rag_workbench.bootstrap import Services
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.models import Document
+from rag_workbench.domain.research import EvidenceSource
+from rag_workbench.ui.research_capture import CAPTURE_KEY
 
 if TYPE_CHECKING:
     from rag_workbench.application.concept_graph import ConceptEdge, ConceptMap
@@ -280,9 +282,25 @@ def _render_neighborhood(
     return edges.get(selected_id)
 
 
-def _concept_payload(concepts: ConceptMap) -> dict[str, object]:
-    def sources(evidence: tuple[GraphEvidence, ...]) -> list[dict[str, str]]:
-        return [{"title": _source_title(item), "text": item.text} for item in evidence]
+def _concept_payload(
+    concepts: ConceptMap, captures: dict[str, EvidenceSource],
+) -> dict[str, object]:
+    def sources(item_id: str, evidence: tuple[GraphEvidence, ...]) -> list[dict[str, str]]:
+        result = []
+        for item in evidence:
+            proof = {"title": _source_title(item), "text": item.text}
+            if locator := getattr(item, "locator", None):
+                snapshot = EvidenceSource(
+                    origin="star", document_id=item.document_id, name=item.document_name,
+                    quote=item.text, page=item.physical_page, mapped_page=item.mapped_page,
+                    locator=locator, graph_item=item_id, record_id=item.record_id,
+                    record_revision=item.record_revision, field=item.field,
+                )
+                identity = hashlib.sha256(snapshot.model_dump_json().encode()).hexdigest()
+                captures[identity] = snapshot
+                proof["capture"] = identity
+            result.append(proof)
+        return result
 
     duplicates = Counter(node.label for node in concepts.nodes)
     nodes = []
@@ -293,7 +311,7 @@ def _concept_payload(concepts: ConceptMap) -> dict[str, object]:
         label = f"{node.label} · {kind_label}" if duplicates[node.label] > 1 else node.label
         nodes.append({
             "id": node.id, "label": label, "kind": node.kind,
-            "color": color, "kindLabel": kind_label, "evidence": sources(node.evidence),
+            "color": color, "kindLabel": kind_label, "evidence": sources(node.id, node.evidence),
         })
         view = concepts.focus(node.id, max_neighbors=12)
         neighborhoods[node.id] = {
@@ -306,7 +324,8 @@ def _concept_payload(concepts: ConceptMap) -> dict[str, object]:
         "nodes": nodes,
         "edges": [{
             "id": edge.id, "source": edge.source, "target": edge.target,
-            "kind": edge.kind, "title": _edge_title(edge), "evidence": sources(edge.evidence),
+            "kind": edge.kind, "title": _edge_title(edge),
+            "evidence": sources(edge.id, edge.evidence),
         } for edge in visible_edges.values()],
         "neighborhoods": neighborhoods,
     }
@@ -320,7 +339,16 @@ def _concept_view(services: Services, scope: tuple[str, int | None]) -> None:
         st.info("当前知识库暂无可展示的知识点。可导入含正文的资料或审核材料记录后再查看。")
         return
     identity = hashlib.sha256(json.dumps(scope).encode()).hexdigest()[:20]
-    _concept_renderer()(data=_concept_payload(concepts), key=f"knowledge_star_{identity}")
+    captures: dict[str, EvidenceSource] = {}
+    data = _concept_payload(concepts, captures)
+    renderer = _concept_renderer()
+    key = f"knowledge_star_{identity}"
+    if captures:
+        selection = renderer(data={**data, "scope": key}, key=key, on_capture_change=lambda: None)
+        if isinstance(selection.capture, str) and selection.capture in captures:
+            st.session_state[CAPTURE_KEY] = captures[selection.capture]
+    else:
+        renderer(data=data, key=key)
 
 
 def _document_view(services: Services, scope: tuple[str, int | None]) -> None:

@@ -10,6 +10,8 @@ from rag_workbench.ui.chat import chat_page
 from rag_workbench.ui.knowledge_graph import knowledge_graph_page
 from rag_workbench.ui.materials import materials_page
 from rag_workbench.ui.pages import debug_page, knowledge_page, packs_page, settings_page
+from rag_workbench.ui.research_board import research_board_page
+from rag_workbench.ui.research_capture import CAPTURE_KEY, capture_dialog
 from rag_workbench.ui.session_state import collect_finished_jobs, monitor_answer_jobs
 from rag_workbench.ui.shell import inject_styles, install_interactions, sidebar
 
@@ -73,8 +75,12 @@ def main() -> None:
             materials_page(services)
         elif page == "知识星图":
             knowledge_graph_page(services)
+        elif page == "研究证据板":
+            research_board_page(services.research)
         else:
             debug_page(services)
+        if source := st.session_state.get(CAPTURE_KEY):
+            capture_dialog(services.research, source)
         install_interactions(session_id, page)
     except AppError as exc:
         st.error(str(exc))

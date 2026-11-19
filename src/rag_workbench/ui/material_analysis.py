@@ -11,7 +11,9 @@ import vl_convert as vlc
 from rag_workbench.application.material_analysis import CONTEXT_AXES, load_observations
 from rag_workbench.application.material_export import export_analysis
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.research import EvidenceSource
 from rag_workbench.ui.material_viewer import render_source_viewer
+from rag_workbench.ui.research_capture import capture_button
 
 KEY = "materials_analysis"
 GROUPS = "comparison"
@@ -293,6 +295,15 @@ def _record_details(service, row, labels, groups, field_labels):
         ref = references[ref_index]
         block = by_id[ref.block_id]
         st.text(ref.quote)
+        capture_button(
+            EvidenceSource(
+                origin="material", library="materials", document_id=block.document_id,
+                name=source_names[block.document_id], page=block.page, quote=ref.quote,
+                locator=block.id, record_id=record.id, record_revision=record.revision,
+                field=ref.field,
+            ),
+            key=f"research_material_{record.id}_{record.revision}_{ref_index}",
+        )
         st.button("在原文中查看", key=f"{KEY}_locate_{record.id}",
                   on_click=_focus_evidence, args=(block, ref.quote))
         viewer_key = f"{KEY}_viewer_{record.id}"

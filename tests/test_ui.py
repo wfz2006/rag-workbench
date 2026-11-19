@@ -17,7 +17,9 @@ def test_all_pages_render_with_empty_kb_and_no_key(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
     assert not app.exception
-    for page in ("知识库管理", "知识包", "系统设置", "检索调试", "知识星图", "AI 聊天"):
+    for page in (
+        "知识库管理", "知识包", "系统设置", "检索调试", "知识星图", "研究证据板", "AI 聊天",
+    ):
         app.sidebar.radio[0].set_value(page).run()
         assert not app.exception, page
     app.chat_input[0].set_value("请介绍一下你自己").run()

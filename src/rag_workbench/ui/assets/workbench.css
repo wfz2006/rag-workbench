@@ -36,6 +36,7 @@ html, body, [data-testid="stApp"] {font-family:var(--wb-font);}
 [data-testid="stApp"] input, [data-testid="stApp"] textarea {font-family:var(--wb-font);}
 .block-container {max-width:824px;padding:88px 48px 70px;}
 .block-container:has(.st-key-knowledge_graph_page) {max-width:1120px;}
+[data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input[value="7"])::before {mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='black' stroke-width='1.5' d='M5 4h14v16H5zM8 8h8m-8 4h8m-8 4h5'/%3E%3C/svg%3E");}
 h1 {font-size:27px!important;font-weight:600!important;letter-spacing:-.5px;}
 h2 {font-size:19px!important;font-weight:600!important;}
 h3 {font-size:17px!important;font-weight:550!important;}

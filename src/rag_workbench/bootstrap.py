@@ -1,6 +1,7 @@
 import hashlib
 import re
 from dataclasses import dataclass
+from functools import cached_property
 
 from pydantic import ValidationError
 
@@ -8,6 +9,7 @@ from rag_workbench.application.generation import GenerationJob
 from rag_workbench.application.knowledge import KnowledgeService
 from rag_workbench.application.pdf_table_lookup import table_labels
 from rag_workbench.application.pipeline import RagPipeline, bounded_history
+from rag_workbench.application.research import ResearchService
 from rag_workbench.application.teaching import load_domain_profile, load_teaching_profile
 from rag_workbench.config import EDITABLE_SETTINGS, Settings
 from rag_workbench.domain.errors import AppError
@@ -39,6 +41,10 @@ class Services:
     knowledge: KnowledgeService
     pipeline: RagPipeline
     repo: Repository
+
+    @cached_property
+    def research(self) -> ResearchService:
+        return ResearchService(self.knowledge)
 
     def ask(self, session_id: str, question: str) -> AnswerResult:
         result = self.pipeline.answer(question, self.history(session_id))

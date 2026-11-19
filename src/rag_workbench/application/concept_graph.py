@@ -3,7 +3,7 @@
 import hashlib
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import combinations
 from typing import Literal
 
@@ -344,7 +344,10 @@ def _approved_evidence(
             MaterialNameEvidence(row.document_id, row.value, row.quote, row.block)
         )
         if excerpt:
-            evidence = _evidence(document, row.block.page, excerpt)
+            evidence = replace(
+                _evidence(document, row.block.page, excerpt, locator=row.block.id),
+                record_id=row.record_id, record_revision=row.revision, field=row.field,
+            )
             by_record[row.record_id][row.field] = (label, evidence)
     return by_record
 
@@ -416,7 +419,7 @@ def build_concept_map(knowledge: KnowledgeService) -> ConceptMap:
         if not terms:
             continue
         found = set()
-        excerpt = _evidence(docs[chunk.document_id], chunk.page, chunk.text)
+        excerpt = _evidence(docs[chunk.document_id], chunk.page, chunk.text, locator=chunk.id)
         for label, kind in terms.items():
             key = _term_key(label)
             labels.setdefault(key, label)

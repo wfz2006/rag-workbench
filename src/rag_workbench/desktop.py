@@ -312,7 +312,7 @@ def run(bundle: Path, profile: Path, *, smoke: bool = False, smoke_external: boo
                     result["pages"] = []
                     pages = (
                         "知识库管理", "知识包", "系统设置", "检索调试",
-                        "材料文献", "知识星图", "AI 聊天",
+                        "材料文献", "知识星图", "研究证据板", "AI 聊天",
                     )
                     for page in pages:
                         page_json = json.dumps(page)

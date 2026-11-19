@@ -35,6 +35,12 @@ class GraphEvidence:
     document_name: str
     page: int | None
     text: str
+    physical_page: int | None = None
+    mapped_page: int | None = None
+    locator: str | None = None
+    record_id: str | None = None
+    record_revision: int | None = None
+    field: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,8 +70,13 @@ def _edge_id(kind: str, first: str, second: str) -> str:
     return ":".join((kind, *sorted((first, second))))
 
 
-def _evidence(document: Document, page: int | None, excerpt: str) -> GraphEvidence:
-    return GraphEvidence(document.id, document.name, document.source_page or page, excerpt)
+def _evidence(
+    document: Document, page: int | None, excerpt: str, *, locator: str | None = None,
+) -> GraphEvidence:
+    return GraphEvidence(
+        document.id, document.name, document.source_page or page, excerpt,
+        page, document.source_page, locator,
+    )
 
 
 def _body_positions(

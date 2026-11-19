@@ -10,7 +10,7 @@ const EDGE_APPEARANCE = {
 };
 let nextStarSearchId = 0;
 
-export default function mountStarGraph({ parentElement, data }) {
+export default function mountStarGraph({ parentElement, data, setTriggerValue }) {
   const root = parentElement.querySelector(".wb-star-explorer");
   if (!root || !data?.nodes?.length) return;
 
@@ -27,6 +27,11 @@ export default function mountStarGraph({ parentElement, data }) {
   const edges = new Map(data.edges.map(edge => [edge.id, edge]));
   const vocabulary = data.nodes.map(node => [node, node.label.toLocaleLowerCase()]);
   const history = [];
+  const storageKey = data.scope ? `rwb-star-view:${data.scope}` : null;
+  let saved;
+  try {
+    saved = storageKey ? JSON.parse(sessionStorage.getItem(storageKey)) : null;
+  } catch { /* The graph still works with browser storage disabled. */ }
   const listeners = new AbortController();
   const listen = (element, event, handler) => {
     element.addEventListener(event, handler, { signal: listeners.signal });
@@ -50,7 +55,9 @@ export default function mountStarGraph({ parentElement, data }) {
 
   results.id = `wb-star-results-${++nextStarSearchId}`;
   search.setAttribute("aria-controls", results.id);
-  let center = nodes.has(data.initial) ? data.initial : data.nodes[0].id;
+  let center = nodes.has(saved?.center)
+    ? saved.center : nodes.has(data.initial) ? data.initial : data.nodes[0].id;
+  if (Array.isArray(saved?.history)) history.push(...saved.history.filter(id => nodes.has(id)));
   let visibleEdges = [];
   let selectedEdge = "";
   let resultRows = [];
@@ -112,9 +119,28 @@ export default function mountStarGraph({ parentElement, data }) {
     for (const source of evidence) {
       const card = create("article");
       card.append(create("h3", source.title), create("p", source.text));
+      if (source.capture) {
+        const button = create("button", "收进证据板");
+        button.type = "button";
+        button.addEventListener("click", () => {
+          const view = chart.getOption().series[0];
+          rememberView(view);
+          setTriggerValue("capture", source.capture);
+        });
+        card.append(button);
+      }
       evidencePanel.append(card);
     }
     inspector.scrollTop = 0;
+  }
+
+  function rememberView(view = chart.getOption().series[0]) {
+    if (!storageKey) return;
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify({
+        center, selectedEdge, history, zoom: view.zoom, camera: view.center,
+      }));
+    } catch { /* Camera persistence is optional when storage is disabled. */ }
   }
 
   function clearSearch() {
@@ -202,6 +228,7 @@ export default function mountStarGraph({ parentElement, data }) {
     }
     back.disabled = history.length === 0;
     clearSearch();
+    rememberView();
   }
 
   function focusEdge(id) {
@@ -216,6 +243,7 @@ export default function mountStarGraph({ parentElement, data }) {
     }
     edgePicker.value = selectedEdge;
     showEvidence();
+    rememberView();
   }
 
   function highlightResult(index) {
@@ -279,7 +307,11 @@ export default function mountStarGraph({ parentElement, data }) {
   listen(results, "click", selectOption);
   listen(edgePicker, "change", () => focusEdge(edgePicker.value));
   listen(back, "click", () => focusNode(history.pop(), false));
-  listen(reset, "click", () => chart.setOption({ series: [{ id: STAR_SERIES_ID, zoom: 1, center: null }] }));
+  listen(reset, "click", () => {
+    chart.setOption({ series: [{ id: STAR_SERIES_ID, zoom: 1, center: null }] });
+    rememberView();
+  });
+  chart.on("graphRoam", () => rememberView());
 
   chart.on("click", ({ dataType, data: item }) => {
     if (dataType === "node") focusNode(item?.id);
@@ -299,6 +331,11 @@ export default function mountStarGraph({ parentElement, data }) {
   clearSearch();
   resize();
   draw();
+  if (saved) {
+    chart.setOption({ series: [{ id: STAR_SERIES_ID, zoom: saved.zoom, center: saved.camera }] });
+    focusEdge(saved.selectedEdge);
+    back.disabled = history.length === 0;
+  }
   const observer = new ResizeObserver(resize);
   observer.observe(chartHost);
   return () => {

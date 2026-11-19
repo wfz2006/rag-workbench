@@ -5,7 +5,9 @@ import streamlit as st
 from markdown_it import MarkdownIt
 
 from rag_workbench.application.prompts import GENERAL_PREFIX
+from rag_workbench.application.research import ResearchService
 from rag_workbench.domain.models import AnswerResult, Inspection, RetrievalResult
+from rag_workbench.ui.research_capture import capture_button
 
 MODE_LABELS = {
     "knowledge_base": "知识库回答",
@@ -138,7 +140,10 @@ def inspection_panel(inspection: Inspection) -> None:
             st.text(result.chunk.text)
 
 
-def answer_panel(result: AnswerResult, show_debug: bool, body_key: str | None = None) -> None:
+def answer_panel(
+    result: AnswerResult, show_debug: bool, body_key: str | None = None, *,
+    message_id: int | None = None,
+) -> None:
     if result.error_code == "persistence_error":
         st.warning("回答已生成，但未保存到历史记录。请先复制正文，再检查磁盘或数据库。")
     label = "已停止" if result.error_code == "cancelled" else MODE_LABELS[result.mode]
@@ -172,6 +177,10 @@ def answer_panel(result: AnswerResult, show_debug: bool, body_key: str | None = 
                     st.caption("相邻上下文：分数为该片段的真实相似度，因同文档邻接关系补入。")
                 st.code(source.chunk.id, language=None)
                 st.text(source.chunk.text)
+                if (message_id is not None and result.mode == "knowledge_base"
+                        and re.fullmatch(r"[a-f0-9]{64}", source.chunk.document_id)):
+                    capture_button(ResearchService.chat_source(source, message_id),
+                                   key=f"research_chat_{message_id}_{i}")
     if show_debug and (result.debug.candidates or result.debug.evidence):
         with st.expander("检索与路由详情"):
             inspection_panel(result.debug)

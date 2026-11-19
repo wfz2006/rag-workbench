@@ -243,6 +243,7 @@ def chat_page(services: Services, session_id: str) -> None:
                     result,
                     services.settings.show_debug,
                     body_key=f"answer_body_{message['id']}",
+                    message_id=message["id"],
                 )
                 if result.mode == "error":
                     _failed_actions(
