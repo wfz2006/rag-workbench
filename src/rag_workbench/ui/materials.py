@@ -14,10 +14,12 @@ from rag_workbench.domain.material_terms import MATERIAL_TERMS
 from rag_workbench.domain.materials import STRUCTURED_FIELDS, MaterialRecord
 from rag_workbench.infrastructure.material_draft_store import MaterialDraftStore
 from rag_workbench.ui import material_drafts as drafts
+from rag_workbench.ui.digitized_curves import render_digitized_curves
 from rag_workbench.ui.material_analysis import render_material_analysis
 from rag_workbench.ui.material_evidence import evidence_editor
 from rag_workbench.ui.material_recovery import AVAILABILITY_PREFIX, render_recovery
 from rag_workbench.ui.material_viewer import render_source_viewer
+from rag_workbench.ui.reproduction import render_reproduction
 
 STATUS_LABELS = {"candidate": "待审核", "approved": "已批准", "rejected": "已拒绝"}
 DOMAIN_LABELS = {
@@ -818,13 +820,21 @@ def materials_page(services: Services) -> None:
             st.info("先上传一篇论文，保留原文后再提取或手工整理实验记录。")
             return
         document_picker = st.container()
-        review_tab, source_tab, export_tab, analysis_tab = st.tabs(
-            ["提取与核对", "原文证据", "导出", "跨论文分析"],
+        review_tab, source_tab, export_tab, analysis_tab, reproduction_tab, curves_tab = st.tabs(
+            ["提取与核对", "原文证据", "导出", "跨论文分析", "实验复现清单", "论文曲线取数"],
             key="materials_tabs", on_change="rerun",
         )
         if analysis_tab.open:
             with analysis_tab:
                 render_material_analysis(service, FIELD_LABELS)
+            return
+        if reproduction_tab.open:
+            with reproduction_tab:
+                render_reproduction(service, documents)
+            return
+        if curves_tab.open:
+            with curves_tab:
+                render_digitized_curves(service, documents)
             return
         identities = [doc.id for doc in documents]
         if st.session_state.get("materials_selected_doc") not in identities:

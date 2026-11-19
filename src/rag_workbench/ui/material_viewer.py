@@ -5,6 +5,7 @@ import base64
 import streamlit as st
 
 from rag_workbench.domain.errors import AppError
+from rag_workbench.domain.materials import EvidenceBlock, LiteratureDocument
 from rag_workbench.infrastructure.material_preview import (
     load_original,
     pdf_page_count,
@@ -42,6 +43,26 @@ def _page_html(preview, zoom, bbox=None) -> str:
         f'<img src="data:image/png;base64,{encoded}" alt="PDF 原始页面">'
         f'{overlay}</div></body></html>'
     )
+
+
+@st.dialog("原文核对", width="large")
+def show_original(repo, document: LiteratureDocument, block: EvidenceBlock, quote: str) -> None:
+    where = f"PDF 第 {block.page} 页" if document.extension == ".pdf" and block.page else "文本片段"
+    st.text(f"{document.name} · {where}")
+    st.text(quote)
+    try:
+        if document.extension == ".pdf" and block.page:
+            show_pdf_page(repo, document, block.page, quote=quote, bbox=block.bbox)
+        else:
+            load_original(repo, document)
+            st.text(block.text)
+    except AppError as exc:
+        st.warning(str(exc))
+
+
+def show_pdf_page(repo, document: LiteratureDocument, page: int, *, quote="", bbox=None) -> None:
+    preview = render_pdf_page(load_original(repo, document), page, scale=1.4, quote=quote)
+    st.iframe(_page_html(preview, 100, bbox), height=620, alt="PDF 原始页面")
 
 
 def render_source_viewer(service, document, blocks, *, key_prefix="materials_viewer") -> None:

@@ -12,6 +12,7 @@ from rag_workbench.application.material_analysis import CONTEXT_AXES, load_obser
 from rag_workbench.application.material_export import export_analysis
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.research import EvidenceSource
+from rag_workbench.ui.experiment_comparison import render_experiment_comparison
 from rag_workbench.ui.material_viewer import render_source_viewer
 from rag_workbench.ui.research_capture import capture_button
 
@@ -351,6 +352,7 @@ def render_material_analysis(service, field_labels):
     if not rows:
         st.info("批准实验记录后即可进行跨论文比较。")
         return
+    render_experiment_comparison(service, rows, field_labels)
     rows, settings = _filter_rows(rows)
     if not rows:
         st.info("没有符合筛选条件的已批准记录。")

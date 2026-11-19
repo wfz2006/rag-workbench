@@ -18,6 +18,7 @@ from typing import NamedTuple
 from filelock import FileLock, Timeout
 from pydantic import ValidationError
 
+from rag_workbench.domain.digitized_curves import DigitizedCurve
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.materials import (
     EvidenceBlock,
@@ -26,6 +27,7 @@ from rag_workbench.domain.materials import (
     MaterialRecord,
 )
 from rag_workbench.domain.models import utc_now
+from rag_workbench.domain.reproduction import ReproductionStep
 
 
 def _safe_io(method):
@@ -116,8 +118,81 @@ class MaterialsRepository:
                     ON material_records(document_id);
                 CREATE INDEX IF NOT EXISTS extraction_runs_document
                     ON extraction_runs(document_id);
+                CREATE TABLE IF NOT EXISTS reproduction_steps (
+                    id TEXT PRIMARY KEY,
+                    paper_id TEXT NOT NULL REFERENCES literature_documents(id),
+                    payload TEXT NOT NULL, revision INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS reproduction_steps_paper ON reproduction_steps(paper_id);
+                CREATE TABLE IF NOT EXISTS digitized_curves (
+                    id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL REFERENCES literature_documents(id),
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS digitized_curves_source ON digitized_curves(document_id);
             """)
             db.execute(f"PRAGMA user_version={self.SCHEMA_VERSION}")
+
+    @_safe_io
+    def digitized_curves(self, document_id: str) -> list[DigitizedCurve]:
+        with self.connect() as db:
+            return [DigitizedCurve.model_validate_json(row[0]) for row in db.execute(
+                "SELECT payload FROM digitized_curves WHERE document_id=? ORDER BY rowid DESC",
+                (document_id,),
+            )]
+
+    @_safe_io
+    def save_digitized_curve(self, curve: DigitizedCurve) -> DigitizedCurve:
+        with self._locked(), self.connect() as db:
+            db.execute("INSERT INTO digitized_curves VALUES (?,?,?) ON CONFLICT(id) DO NOTHING",
+                       (curve.id, curve.source.document_id, curve.model_dump_json()))
+            return DigitizedCurve.model_validate_json(db.execute(
+                "SELECT payload FROM digitized_curves WHERE id=?", (curve.id,),
+            ).fetchone()[0])
+
+    @_safe_io
+    def remove_digitized_curve(self, curve: DigitizedCurve) -> None:
+        with self._locked(), self.connect() as db:
+            db.execute("DELETE FROM digitized_curves WHERE id=? AND document_id=?",
+                       (curve.id, curve.source.document_id))
+
+    @_safe_io
+    def reproduction_steps(self, paper_id: str) -> list[ReproductionStep]:
+        with self.connect() as db:
+            return [ReproductionStep.model_validate_json(row[0]) for row in db.execute(
+                "SELECT payload FROM reproduction_steps WHERE paper_id=? ORDER BY rowid",
+                (paper_id,),
+            )]
+
+    @_safe_io
+    def save_reproduction_step(self, step: ReproductionStep) -> ReproductionStep:
+        next_step = step.model_copy(update={"revision": step.revision + 1})
+        with self._locked(), self.connect() as db:
+            if step.revision:
+                change = db.execute(
+                    "UPDATE reproduction_steps SET payload=?, revision=? "
+                    "WHERE id=? AND paper_id=? AND revision=?",
+                    (next_step.model_dump_json(), next_step.revision, step.id, step.paper_id,
+                     step.revision),
+                )
+            else:
+                change = db.execute(
+                    "INSERT INTO reproduction_steps VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING",
+                    (step.id, step.paper_id, next_step.model_dump_json(), next_step.revision),
+                )
+            if not change.rowcount:
+                raise AppError("reproduction_conflict", "条目已在其他窗口修改，请重新打开后核对。")
+        return next_step
+
+    @_safe_io
+    def remove_reproduction_step(self, step: ReproductionStep) -> None:
+        with self._locked(), self.connect() as db:
+            change = db.execute(
+                "DELETE FROM reproduction_steps WHERE id=? AND paper_id=? AND revision=?",
+                (step.id, step.paper_id, step.revision),
+            )
+            if not change.rowcount:
+                raise AppError("reproduction_conflict", "条目已在其他窗口修改，请重新打开后核对。")
 
     def _locked(self):
         return FileLock(self.root / ".materials.lock", timeout=5)
