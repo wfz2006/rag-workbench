@@ -7,10 +7,7 @@ from rag_workbench.bootstrap import Services, build_services, load_settings, ser
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
 from rag_workbench.ui.chat import chat_page
-from rag_workbench.ui.knowledge_graph import knowledge_graph_page
-from rag_workbench.ui.materials import materials_page
 from rag_workbench.ui.pages import debug_page, knowledge_page, packs_page, settings_page
-from rag_workbench.ui.research_board import research_board_page
 from rag_workbench.ui.research_capture import CAPTURE_KEY, capture_dialog
 from rag_workbench.ui.session_state import collect_finished_jobs, monitor_answer_jobs
 from rag_workbench.ui.shell import inject_styles, install_interactions, sidebar
@@ -72,10 +69,16 @@ def main() -> None:
         elif page == "系统设置":
             settings_page(services)
         elif page == "材料文献":
+            from rag_workbench.ui.materials import materials_page
+
             materials_page(services)
         elif page == "知识星图":
+            from rag_workbench.ui.knowledge_graph import knowledge_graph_page
+
             knowledge_graph_page(services)
         elif page == "研究证据板":
+            from rag_workbench.ui.research_board import research_board_page
+
             research_board_page(services.research)
         else:
             debug_page(services)

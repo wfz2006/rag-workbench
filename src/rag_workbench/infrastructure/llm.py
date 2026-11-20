@@ -1,8 +1,6 @@
 from collections.abc import Iterator
 from typing import Any
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
-
 from rag_workbench.config import Settings
 from rag_workbench.domain.errors import AppError
 from rag_workbench.domain.models import ChatMessage
@@ -22,6 +20,8 @@ class OpenAIChatProvider:
                     "尚未配置 DEEPSEEK_API_KEY。请在当前工作空间的 .env 中配置后刷新页面，"
                     "再重试问题。",
                 )
+            from openai import OpenAI
+
             self._client = OpenAI(
                 api_key=key,
                 base_url=self.settings.llm_base_url,
@@ -58,6 +58,8 @@ class OpenAIChatProvider:
         history: list[ChatMessage] | None = None,
         cancellation: Cancellation | None = None,
     ) -> Iterator[str]:
+        from openai import APIConnectionError, APIStatusError, APITimeoutError
+
         stream = None
         try:
             if cancellation:
@@ -118,6 +120,8 @@ class OpenAIChatProvider:
         json_mode: bool = False,
         history: list[ChatMessage] | None = None,
     ) -> str:
+        from openai import APIConnectionError, APIStatusError, APITimeoutError
+
         try:
             client = self._get_client()
             arguments = self._arguments(system, user, json_mode, history)

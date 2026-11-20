@@ -17,6 +17,26 @@ from rag_workbench.desktop import (
 )
 
 
+def test_chat_home_opens_without_importing_chart_or_remote_provider_sdks(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    probe = """
+import sys
+from streamlit.testing.v1 import AppTest
+
+home = AppTest.from_file(sys.argv[1], default_timeout=30).run()
+assert home.chat_input and not home.exception
+unused = {"altair", "vl_convert", "openai"}.intersection(sys.modules)
+assert not unused, sorted(unused)
+"""
+    subprocess.run(
+        [sys.executable, "-B", "-c", probe, str(root / "app.py")],
+        cwd=tmp_path,
+        env={**server_environment(), "PYTHONPATH": str(root / "src")},
+        check=True,
+        timeout=60,
+    )
+
+
 def test_second_instance_cannot_modify_a_locked_profile(tmp_path):
     pytest.importorskip("webview")
     from filelock import FileLock

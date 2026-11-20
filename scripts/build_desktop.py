@@ -207,6 +207,7 @@ def build(output: Path, *, include_model: bool, archive: bool) -> None:
         "import altair,vl_convert,rag_workbench.ui.app; "
         "print('Standalone runtime imports OK')",
     )
+    execute(runtime / "python.exe", "-I", "-B", ROOT / "scripts/precompile_desktop_startup.py")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT))
     (output / "BUILD_INFO.json").write_text(
